@@ -1,19 +1,35 @@
-import './App.css';
-import React, { useState } from "react";
-import Popup from "./Popup";
+import React, { useEffect } from "react";
 
-export default function App() {
-  const [isPopupOpen, setIsPopupOpen] = useState(false);
+function PopupWindow() {
+  useEffect(() => {
+    const popup = window.open(
+      "",
+      "Popup",
+      "width=400,height=300,left=200,top=200"
+    );
 
-  return (
-    <div style={{ padding: "20px" }}>
-      <h1>React Popup Example</h1>
-      <button onClick={() => setIsPopupOpen(true)}>Open Popup</button>
+    if (popup) {
+      popup.document.write(`
+        <html>
+          <head>
+            <title>React Popup</title>
+            <style>
+              body { font-family: Arial; padding: 20px; }
+              button { padding: 8px 12px; }
+            </style>
+          </head>
+          <body>
+            <h2>Standalone Popup Window</h2>
+            <p>This is a separate browser window.</p>
+            <button onclick="window.close()">Close</button>
+          </body>
+        </html>
+      `);
+      popup.document.close();
+    }
+  }, []);
 
-      <Popup isOpen={isPopupOpen} onClose={() => setIsPopupOpen(false)}>
-        <h2>Hello from Popup!</h2>
-        <p>This is a simple popup window in React.</p>
-      </Popup>
-    </div>
-  );
+  return null; // Nothing rendered in main page
 }
+
+export default PopupWindow;
