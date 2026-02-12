@@ -1,2 +1,2 @@
-# backtester
-backtester for evaluating Covered Call strategy performance
+## Backtester
+User Interface backtester for evaluating Covered Call strategy performance
