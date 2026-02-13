@@ -88,7 +88,7 @@ def modify_data(df: pd.DataFrame, start_dt:dt.datetime, pct_otm_limit:float, cal
 
     # identify the tickers in scope. These are the options that fall within the pct OTM range on the start_dt, or the rebalance date.
     df_start_dt = df_new.copy(deep=True)
-    df_start_dt = df_start_dt.loc[pd.to_datetime(df_start_dt.date).dt.strftime("%Y-%m-%d") == start_dt]
+    #df_start_dt = df_start_dt.loc[pd.to_datetime(df_start_dt.date).dt.strftime("%Y-%m-%d") == start_dt]
     df_start_dt = df_start_dt[(df_start_dt["pct_otm"] <= pct_otm_limit) & (df_start_dt["pct_otm"] >= -0.005)]
     option_universe = np.unique(df_start_dt["ticker"]).tolist()
     if option_universe == []:
@@ -104,7 +104,7 @@ def modify_data(df: pd.DataFrame, start_dt:dt.datetime, pct_otm_limit:float, cal
 
         df_new.loc[:, 'ticker'] = df_new.loc[:, 'ticker'].apply(lambda x: x if x[-2:] != ".0" else x[:-2])
 
-        return df_new
+        return [option_universe, df_new, df_start_dt]
     
 
-data = fetch_data("XIU", ((dt.date.today() - pd.tseries.offsets.BusinessDay(60)).strftime('%Y-%m-%d'), dt.date.today().strftime('%Y-%m-%d')), "call", 0.5)
+data = fetch_data("XIU", ((dt.date.today() - pd.tseries.offsets.BusinessDay(60)).strftime('%Y-%m-%d'), dt.date.today().strftime('%Y-%m-%d')), "call")
