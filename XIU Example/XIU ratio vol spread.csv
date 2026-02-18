@@ -1,0 +1,5 @@
+﻿SEC_ID,SEC_NAME,TICKER,SEC_TYPE,CUR,ALLOC,UNDERLYING,DTM,MONEYNESS
+cash,Cash,,cash,CAD,10000000,,,
+equity1,XIU CN,XIU CN,equity,CAD,1,,,
+option1,Call,,call option,CAD,-0.5,equity1,5,0
+option2,Put,,put option,CAD,0.5,equity1,5,0

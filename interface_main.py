@@ -9,6 +9,7 @@ from popup_messages import PopUpMsg
 from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import Qt, QDate, QDateTime
+from PyQt5.QtGui import QFont
 import qtwidgets
 
 import os
@@ -33,31 +34,38 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Backtester")
-        self.setGeometry(0, 0, 400, 500)
-        layout = QVBoxLayout()
+        self.setGeometry(0, 0, 400, 300)
+        
+        # Fonts
+        big_font = QFont()
+        big_font.setPointSize(11)
+        small_font = QFont()
+        small_font.setPointSize(10)
 
         # Final Bottom Button to trigger Backtesting Screen Popup
         self.button = QPushButton("Run Backtest", self)
         self.button.clicked.connect(self.popup_show_backtest_results)
         self.button.resize(120, 40)
-        self.button.move(140, 440)
+        self.button.move(140, 250)
         
         # Date Range Selection
         self.dateedit1 = QDateEdit(self, calendarPopup=True)
         self.dateedit1.setDateTime(dt.datetime.today() - BDay(5))
         self.dateedit1.setMaximumDate(dt.datetime.today() - BDay(1))
         self.dateedit1.dateChanged.connect(self.update_label)
-        self.dateedit1.move(70, 10)
+        self.dateedit1.move(80, 10)
         
         self.dateedit2 = QDateEdit(self, calendarPopup=True)
         self.dateedit2.setDateTime(QtCore.QDateTime.currentDateTime())
         self.dateedit2.setMaximumDate(dt.datetime.today() - BDay(1))
         self.dateedit2.dateChanged.connect(self.update_label)
-        self.dateedit2.move(240, 10)
+        self.dateedit2.move(260, 10)
         
         self.label_start = QLabel('Start Date:', self)
+        self.label_start.setFont(small_font)
         self.label_start.move(10, 10)
-        self.label_end = QLabel('End Date:', self)
+        self.label_end = QLabel('  End Date:', self)
+        self.label_end.setFont(small_font)
         self.label_end.move(180, 10)
         self.check_dates_label = QLabel("", self)
         self.check_dates_label.resize(300, 30)
@@ -77,11 +85,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.browse_button.move(280, 80)
         self.browse_button.clicked.connect(self.select_portfolio_folder)
         
-        # Backtest Inputs
-        self.dtm_label = QLabel("DTM", self)
-        self.dtm_input = QLineEdit(self)
-        self.starting_pos = 
+        # Underlying Input
+        self.underly_label = QLabel("Underlying Asset", self)
+        self.underly_label.setFont(big_font)
+        self.underly_label.resize(200, 40)
+        self.underly_label.move(10, 120)
         
+        self.ticker_label = QLabel("ETF / Stock Ticker:", self)
+        self.ticker_label.setFont(small_font)
+        self.ticker_label.resize(240, 30)
+        self.ticker_label.move(30, 160)
+        self.underly_input = QLineEdit(self)
+        self.underly_input.resize(230, 30)
+        self.underly_input.setFont(small_font)
+        self.underly_input.move(150, 160)
+        
+        self.ticker_label = QLabel("Bond Cusip:", self)
+        self.ticker_label.setFont(small_font)
+        self.ticker_label.resize(240, 30)
+        self.ticker_label.move(30, 200)
+        self.underly_input = QLineEdit(self)
+        self.underly_input.resize(230, 30)
+        self.underly_input.setFont(small_font)
+        self.underly_input.move(150, 200)
         
         
     def select_portfolio_folder(self):
@@ -96,7 +122,7 @@ class MainWindow(QtWidgets.QMainWindow):
     
             if file_path:  # If user selected a folder
                 self.portfolio_input.setText(file_path)
-                self.portfolio_path = filepath
+                self.portfolio_path = file_path
             else:
                 self.portfolio_input.setText("No portfolio selected")
         except Exception as e:
