@@ -1,0 +1,4 @@
+﻿sec_id,sec_name,ticker,sec_type,currency,allocation,option_w_against,end_date,DTM,rebal_rule,pct_otm,target_yield
+cash,Cash,,cash,CAD,10000000,,12/31/2025,30,S,,-1
+equity1,XIU CN,,equity,CAD,1,,,,,,
+option1,XIU CN,,call option,CAD,-0.5,equity1,,,,,

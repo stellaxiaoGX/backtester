@@ -34,7 +34,8 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Backtester")
         self.setGeometry(0, 0, 400, 500)
-        
+        layout = QVBoxLayout()
+
         # Final Bottom Button to trigger Backtesting Screen Popup
         self.button = QPushButton("Run Backtest", self)
         self.button.clicked.connect(self.popup_show_backtest_results)
@@ -63,14 +64,47 @@ class MainWindow(QtWidgets.QMainWindow):
         self.check_dates_label.move(10, 40)
         self.update_label()
         
-        # Portfolio File Input
+        self.start_date = self.dateedit1.date()
+        self.end_date = self.dateedit2.date()
         
+        # Portfolio File Input
+        self.portfolio_input = QLineEdit(self)
+        self.portfolio_input.move(10, 80)
+        self.portfolio_input.resize(260, 30)
+        self.portfolio_input.setPlaceholderText("Select a portfolio file (csv)...")
+        
+        self.browse_button = QPushButton("Select Portfolio", self)
+        self.browse_button.move(280, 80)
+        self.browse_button.clicked.connect(self.select_portfolio_folder)
         
         # Backtest Inputs
+        self.dtm_label = QLabel("DTM", self)
+        self.dtm_input = QLineEdit(self)
+        self.starting_pos = 
         
         
         
+    def select_portfolio_folder(self):
+        """Open a folder selection dialog and update label."""
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select File",
+                "",  # Start directory ("" means OS default)
+                "Csv Files (*.csv)"
+            )
+    
+            if file_path:  # If user selected a folder
+                self.portfolio_input.setText(file_path)
+                self.portfolio_path = filepath
+            else:
+                self.portfolio_input.setText("No portfolio selected")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
+
     def update_label(self):
+        self.start_date = self.dateedit1.date()
+        self.end_date = self.dateedit2.date()
         if self.dateedit1.date() > self.dateedit2.date():
             self.check_dates_label.setText("Warning: start date must be before end date.")
             self.check_dates_label.setStyleSheet("color: red;")
@@ -80,20 +114,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.check_dates_label.setText(f"Selected Date Range: {formatted_start_date} to {formatted_end_date}")
             self.check_dates_label.setStyleSheet("color: black;")
         
-        
-    def read_portfolio(self):
-        file = self.portfolio_csv
-        results = []
-        return result    
-        
-    
-    def backtest(self, portfolio):
-        results = []
-        return results
-        
     def popup_show_backtest_results(self):
         popup = BackTestResults("Hello! Here are the backtest results.", self)
         popup.exec_()
+        
+        
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
