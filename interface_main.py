@@ -34,8 +34,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Backtester")
-        self.setGeometry(0, 0, 400, 300)
-        
+        self.setFixedSize(400, 300)
+        self.setGeometry(200, 200, 400, 300)
+        layout = QVBoxLayout()
+
         # Fonts
         big_font = QFont()
         big_font.setPointSize(11)
@@ -46,7 +48,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.button = QPushButton("Run Backtest", self)
         self.button.clicked.connect(self.popup_show_backtest_results)
         self.button.resize(120, 40)
-        self.button.move(140, 250)
+        self.button.move(140, 245)
         
         # Date Range Selection
         self.dateedit1 = QDateEdit(self, calendarPopup=True)
@@ -66,7 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.label_start.move(10, 10)
         self.label_end = QLabel('  End Date:', self)
         self.label_end.setFont(small_font)
-        self.label_end.move(180, 10)
+        self.label_end.move(190, 10)
         self.check_dates_label = QLabel("", self)
         self.check_dates_label.resize(300, 30)
         self.check_dates_label.move(10, 40)
@@ -86,30 +88,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.browse_button.clicked.connect(self.select_portfolio_folder)
         
         # Underlying Input
-        self.underly_label = QLabel("Underlying Asset", self)
+        self.underly_label = QLabel("Define Underlying Asset", self)
         self.underly_label.setFont(big_font)
         self.underly_label.resize(200, 40)
         self.underly_label.move(10, 120)
         
-        self.ticker_label = QLabel("ETF / Stock Ticker:", self)
-        self.ticker_label.setFont(small_font)
-        self.ticker_label.resize(240, 30)
-        self.ticker_label.move(30, 160)
-        self.underly_input = QLineEdit(self)
-        self.underly_input.resize(230, 30)
-        self.underly_input.setFont(small_font)
-        self.underly_input.move(150, 160)
+        self.button_group = QButtonGroup(self)
+        self.button_group.setExclusive(True)
+        self.asset_inputs = {}
+
+        radio1 = QRadioButton("Stock / ETF:", self)
+        radio1.move(30, 160)
+        radio1.setFont(small_font)
+        radio1.resize(100, 30)
+        self.button_group.addButton(radio1, 0)
+        input_box1 = QLineEdit(self)
+        input_box1.move(140, 160)
+        input_box1.setFont(small_font)
+        input_box1.resize(240, 30)
+        input_box1.setPlaceholderText(f"  Enter ticker for Stock / ETF")
+        self.asset_inputs[0] = input_box1
         
-        self.ticker_label = QLabel("Bond Cusip:", self)
-        self.ticker_label.setFont(small_font)
-        self.ticker_label.resize(240, 30)
-        self.ticker_label.move(30, 200)
-        self.underly_input = QLineEdit(self)
-        self.underly_input.resize(230, 30)
-        self.underly_input.setFont(small_font)
-        self.underly_input.move(150, 200)
+        radio2 = QRadioButton("Bond:", self)
+        radio2.move(30, 200)
+        radio2.setFont(small_font)
+        radio2.resize(100, 30)
+        self.button_group.addButton(radio2, 1)
+        input_box2 = QLineEdit(self)
+        input_box2.move(140, 200)
+        input_box2.setFont(small_font)
+        input_box2.resize(240, 30)
+        input_box2.setPlaceholderText(f"  Enter ticker for Bond")
+        self.asset_inputs[1] = input_box2
+    
+    def popup_show_backtest_results(self):
         
-        
+        # Warnings:
+        if self.start_date > self.end_date:
+            QMessageBox.warning(self, "Invalid Date Range", "Start Date must be before End Date.")
+            return
+        selected_id = self.button_group.checkedId()
+        if selected_id == -1:
+            QMessageBox.warning(self, "No Selection", "Please select an option.")
+            return
+
+        selected_text = self.button_group.button(selected_id).text()
+        ticker = self.asset_inputs[selected_id].text()
+
+        popup = BackTestResults(f"Hello! Here are the backtest results for {ticker}.", self)
+        popup.exec_()
+
     def select_portfolio_folder(self):
         """Open a folder selection dialog and update label."""
         try:
@@ -139,11 +167,6 @@ class MainWindow(QtWidgets.QMainWindow):
             formatted_end_date = self.dateedit2.date().toString("yyyy-dd-MM")
             self.check_dates_label.setText(f"Selected Date Range: {formatted_start_date} to {formatted_end_date}")
             self.check_dates_label.setStyleSheet("color: black;")
-        
-    def popup_show_backtest_results(self):
-        popup = BackTestResults("Hello! Here are the backtest results.", self)
-        popup.exec_()
-        
         
         
 if __name__ == "__main__":

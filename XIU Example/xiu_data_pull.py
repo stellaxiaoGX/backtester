@@ -9,7 +9,6 @@ cur_dir = os.path.dirname(__file__)
 sys.path.append('Z:\\ApolloGX\\im_prod\\std_lib')
 import common
 
-market_data_tbl_columns = {"gx_id":str, "date":str, "ticker":str, "field":str, "value":float, "currency":str, "source":str, "script_source":str}
 
 def fetch_data(ticker:str, date_ranges:Tuple[dt.datetime, dt.datetime], call_put:str, pct_otm_limit:float=0.05) -> Dict[str, pd.DataFrame]:
     """
