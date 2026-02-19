@@ -104,6 +104,3 @@ def modify_data(df: pd.DataFrame, start_dt:dt.datetime, pct_otm_limit:float, cal
         df_new.loc[:, 'ticker'] = df_new.loc[:, 'ticker'].apply(lambda x: x if x[-2:] != ".0" else x[:-2])
 
         return df_new
-    
-
-data = fetch_data("XIU", ((dt.date.today() - pd.tseries.offsets.BusinessDay(60)).strftime('%Y-%m-%d'), dt.date.today().strftime('%Y-%m-%d')), "call", 0.015)

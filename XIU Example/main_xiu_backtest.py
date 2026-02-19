@@ -4,35 +4,37 @@ import datetime as dt
 from pandas.tseries.offsets import BDay
 from xiu_data_pull import fetch_data
 
-start = dt.today() - BDay(60)
-end = dt.today() - BDay(1)
+# Date Range Input
+start = dt.datetime.today() - BDay(60)
+end = dt.datetime.today() - BDay(1)
 
-# initialize portfolio
+# Ticker input
 ticker = "XIU"
-cash = 1000000
-holdings = []
-positions = []
 
-# option data pull
-options_universe = fetch_data("XIU", start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'), "call", 0.05)
+# option universe data pull
+###call_universe = fetch_data(ticker, (start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')), "call", 0.01)
+###put_universe = fetch_data(ticker, (start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')), "put", 0.01)
 
 # read and parse portfolio input into dataframe
-portfolio = pd.read_csv(r"C:\Users\sxiao\backtester\XIU Example\XIU put call parity.csv")
+port = pd.read_csv(r"C:\Users\sxiao\backtester\XIU Example\XIU put call parity.csv")
+port.set_index(port.columns[0], inplace=True)
 
-
-
-
+starting = port.loc["cash", 'ALLOC']
+mv = starting
+holdings = [ticker, "put", "call", "cash"]
+positions = [0, 0, 0, 0]
 
 
 date = start
 while date <= end:
     if date == start:
-        
-        return
-    if date == end:
-        return
+        positions[0] = starting
+        print(date.strftime('%Y-%m-%d')+f": allocated ${starting} to {ticker}.")
     else:
-        if maturity:
-            return
-        elif ex:
-            return
+        print(date.strftime('%Y-%m-%d'))
+    #if maturity:
+    #    continue
+    #elif ex:
+    #    continue
+    #portfolio_calc(portfolio)
+    date = date + BDay(1)

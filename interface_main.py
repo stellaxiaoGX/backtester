@@ -106,7 +106,7 @@ class MainWindow(QtWidgets.QMainWindow):
         input_box1.move(140, 160)
         input_box1.setFont(small_font)
         input_box1.resize(240, 30)
-        input_box1.setPlaceholderText(f"  Enter ticker for Stock / ETF")
+        input_box1.setPlaceholderText(f" Enter ticker for Stock / ETF")
         self.asset_inputs[0] = input_box1
         
         radio2 = QRadioButton("Bond:", self)
@@ -118,7 +118,7 @@ class MainWindow(QtWidgets.QMainWindow):
         input_box2.move(140, 200)
         input_box2.setFont(small_font)
         input_box2.resize(240, 30)
-        input_box2.setPlaceholderText(f"  Enter ticker for Bond")
+        input_box2.setPlaceholderText(f" Enter ticker for Bond")
         self.asset_inputs[1] = input_box2
     
     def popup_show_backtest_results(self):
