@@ -1,5 +1,5 @@
-﻿SEC_ID,SEC_TYPE,CUR,ALLOC,DTM,MONEYNESS
-cash,cash,CAD,10000000,,
-underlying,equity,CAD,1,,
-option1,call option,CAD,-0.5,W,0
-option2,put option,CAD,0.5,W,0
+﻿SEC_ID,SEC_TYPE,CUR,ALLOC,DTM,MONEYNESS,,,
+cash,cash,CAD,10000,,,,,
+underlying,equity,CAD,1000000,,,,,
+option1,call option,CAD,-0.5,W,0,,Notional,strike
+option2,put option,CAD,0.5,W,0,,mv,market price

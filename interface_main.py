@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 from pandas.tseries.offsets import BDay
+from pathlib import Path
 
 import faulthandler
 import widget_functions as wf
@@ -92,49 +93,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self.underly_label.setFont(big_font)
         self.underly_label.resize(200, 40)
         self.underly_label.move(10, 120)
-        
-        self.button_group = QButtonGroup(self)
-        self.button_group.setExclusive(True)
-        self.asset_inputs = {}
 
-        radio1 = QRadioButton("Stock / ETF:", self)
-        radio1.move(30, 160)
-        radio1.setFont(small_font)
-        radio1.resize(100, 30)
-        self.button_group.addButton(radio1, 0)
-        input_box1 = QLineEdit(self)
-        input_box1.move(140, 160)
-        input_box1.setFont(small_font)
-        input_box1.resize(240, 30)
-        input_box1.setPlaceholderText(f" Enter ticker for Stock / ETF")
-        self.asset_inputs[0] = input_box1
+        self.ticker = QLabel("Stock / ETF:", self)
+        self.ticker.move(50, 160)
+        self.ticker.setFont(small_font)
+        self.ticker.resize(100, 30)
+        self.input_box = QLineEdit(self)
+        self.input_box.move(140, 160)
+        self.input_box.setFont(small_font)
+        self.input_box.resize(240, 30)
+        self.input_box.setPlaceholderText(f" Enter ticker for Stock or ETF ...")
         
-        radio2 = QRadioButton("Bond:", self)
-        radio2.move(30, 200)
-        radio2.setFont(small_font)
-        radio2.resize(100, 30)
-        self.button_group.addButton(radio2, 1)
-        input_box2 = QLineEdit(self)
-        input_box2.move(140, 200)
-        input_box2.setFont(small_font)
-        input_box2.resize(240, 30)
-        input_box2.setPlaceholderText(f" Enter ticker for Bond")
-        self.asset_inputs[1] = input_box2
+        self.region_ticker = QLabel("Country Code:", self)
+        self.region_ticker.move(50, 200)
+        self.region_ticker.setFont(small_font)
+        self.region_ticker.resize(100, 30)
+        self.region_input_box = QLineEdit(self)
+        self.region_input_box.move(140, 200)
+        self.region_input_box.setFont(small_font)
+        self.region_input_box.resize(240, 30)
+        self.region_input_box.setPlaceholderText(f" Enter Bloomberg country code ...")
     
     def popup_show_backtest_results(self):
         
+        portfolio_path = self.portfolio_path
+        ticker = self.input_box.text()
+        country = self.region_input_box.text()
         # Warnings:
         if self.start_date > self.end_date:
             QMessageBox.warning(self, "Invalid Date Range", "Start Date must be before End Date.")
             return
-        selected_id = self.button_group.checkedId()
-        if selected_id == -1:
-            QMessageBox.warning(self, "No Selection", "Please select an option.")
+        if not os.path.isfile(self.portfolio_path):
+            QMessageBox.warning(self, "Invalid Portfolio Path", "Invalid portfolio configuration file path.")
             return
-
-        selected_text = self.button_group.button(selected_id).text()
-        ticker = self.asset_inputs[selected_id].text()
-
+        #if ticker not in valid_list:
+        #    QMessageBox.warning(self, "Invalid Identifier", "Ticker not valid, please revise.")
+        #    return
+        #if country not in valid_country_codes:
+        #    QMessageBox.warning(self, "Invalid Country Identifier", "Country Code not valid, please revise.")
+        #    return
+        
         popup = BackTestResults(f"Hello! Here are the backtest results for {ticker}.", self)
         popup.exec_()
 

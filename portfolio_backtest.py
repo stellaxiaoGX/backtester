@@ -16,6 +16,13 @@ class Cash():
     def __init__(self, pos, cur):
         self.position = pos
         self.currency = cur
+        self.rate = 0.025 #daily accrual for cash + premium until next roll
+        
+class Bond():
+    def __init__(self, pos, cur):
+        self.position = pos
+        self.currency = cur
+        self.rate = 0.025
 
 class Portfolio():
     def __init__(self, starting, underlying, cur):
@@ -24,4 +31,10 @@ class Portfolio():
         return
 
     def run_backtest(self):
+        
         return
+    
+    def visualize_backtest(self):
+        return
+    
+    
