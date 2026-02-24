@@ -1,17 +1,10 @@
-import pandas as pd
-import numpy as np
 import datetime as dt
 from pandas.tseries.offsets import BDay
-from pathlib import Path
 
-import faulthandler
-import widget_functions as wf
-from popup_messages import PopUpMsg
 from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtWidgets import *
-from PyQt5.QtCore import Qt, QDate, QDateTime
+from PyQt5.QtCore import *
 from PyQt5.QtGui import QFont
-import qtwidgets
 
 import os
 cur_dir = os.path.dirname(__file__)
@@ -21,8 +14,8 @@ import sys
 class BackTestResults(QDialog):
     def __init__(self, message, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Results Window")
-        self.setFixedSize(250, 120)
+        self.setWindowTitle("Backtest Results Window")
+        self.setFixedSize(900, 700)
 
         # Layout and widgets
         layout = QVBoxLayout()
@@ -44,6 +37,10 @@ class MainWindow(QtWidgets.QMainWindow):
         big_font.setPointSize(11)
         small_font = QFont()
         small_font.setPointSize(10)
+        
+        # Validated input lists
+        self.valid_list = ["XIU"]
+        self.valid_country_codes = ["CN", "US"]
 
         # Final Bottom Button to trigger Backtesting Screen Popup
         self.button = QPushButton("Run Backtest", self)
@@ -83,6 +80,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.portfolio_input.move(10, 80)
         self.portfolio_input.resize(260, 30)
         self.portfolio_input.setPlaceholderText("Select a portfolio file (csv)...")
+        self.portfolio_path = 0
         
         self.browse_button = QPushButton("Select Portfolio", self)
         self.browse_button.move(280, 80)
@@ -115,8 +113,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.region_input_box.setPlaceholderText(f" Enter Bloomberg country code ...")
     
     def popup_show_backtest_results(self):
-        
-        portfolio_path = self.portfolio_path
+
         ticker = self.input_box.text()
         country = self.region_input_box.text()
         # Warnings:
@@ -126,13 +123,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if not os.path.isfile(self.portfolio_path):
             QMessageBox.warning(self, "Invalid Portfolio Path", "Invalid portfolio configuration file path.")
             return
-        #if ticker not in valid_list:
-        #    QMessageBox.warning(self, "Invalid Identifier", "Ticker not valid, please revise.")
-        #    return
-        #if country not in valid_country_codes:
-        #    QMessageBox.warning(self, "Invalid Country Identifier", "Country Code not valid, please revise.")
-        #    return
+        if ticker not in self.valid_list:
+            QMessageBox.warning(self, "Invalid Identifier", "Ticker not valid.")
+            return
+        if country not in self.valid_country_codes:
+            QMessageBox.warning(self, "Invalid Country Identifier", "Country Code not valid.")
+            return
         
+        # Check if ticker with country code exists
+        asset = ticker+" "+country+" Equity"
+        
+        # Check if ticker with country code data exists for time range input
+        
+        # Call Popup and Backtest Module
         popup = BackTestResults(f"Hello! Here are the backtest results for {ticker}.", self)
         popup.exec_()
 
