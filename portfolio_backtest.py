@@ -1,7 +1,13 @@
 import datetime as dt
 import pandas as pd
-from pandas.tseries.offsets import BDay
-
+import os
+cur_dir = os.path.dirname(__file__)
+import sys
+sys.path.append('Z:\\ApolloGX')
+if "\\im_dev\\" in cur_dir:
+    import im_dev.std_lib.common as common
+else:
+    import im_prod.std_lib.common as common
 
 
 class Option():
@@ -21,7 +27,34 @@ class Option():
             return True
         else:
             return False
+    
+    def roll_option(self, today:dt.date()):
+        return
         
+    def select_option(self, today:dt.date()):
+        selected_option = None
+
+        option_univ = self.download_options(self.ticker, today, today)
+        for opt in option_univ:
+            selected_option = None
+
+        
+        return selected_option
+    
+    def download_options(self, ticker: str, start_date:str, end_date:str):
+
+        download_html = f"https://www.m-x.ca/en/trading/data/historical?symbol={ticker.lower()}&from={start_date}&to={end_date}&dnld=1#quotes"
+        current_att = 0
+        while current_att < 8:
+            try:
+                df_download = common.download_from_url(download_html)
+                print(f"Downloaded data for {ticker} from {start_date} to {end_date}")
+                return df_download
+            except:
+                print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
+                return pd.DataFrame()
+
+    
     def option_buy_back(self):
         return
     
@@ -31,6 +64,10 @@ class ULAsset():
         self.ticker = ticker
         self.currency = cur
         
+    def fetch_ex_dates(self):
+        return
+    
+    
     def is_ex_date(self, today:dt.date()):
         return False
     
@@ -66,6 +103,8 @@ class Portfolio():
         return
 
 
-start = dt.today() - BDay(90)
-end = dt.today() - BDay(1)
+today = dt.datetime.now()
+
+start = common.workday(today, -90)
+end = common.workday(today, -1)
 

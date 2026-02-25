@@ -4,6 +4,14 @@ import datetime as dt
 from pandas.tseries.offsets import BDay
 from xiu_data_pull import fetch_data
 from portfolio_backtest import Cash, Option, Stock, Portfolio
+import sys
+sys.path.append('Z:\\ApolloGX')
+if "\\im_dev\\" in cur_dir:
+    import im_dev.std_lib.common as common
+else:
+    import im_prod.std_lib.common as common
+
+
 
 def maturity(portfolio, date):
     return True
@@ -11,6 +19,21 @@ def maturity(portfolio, date):
 
 def ex(portfolio, date):
     return True
+
+
+
+def get_div_data(equity_list=list, min_date:dt.datetime=dt.datetime.now(), max_date:dt.datetime=None):
+    if equity_list == []:
+        return pd.DataFrame(columns=['ticker', 'ex_date', 'payable_date', 'dvd_amount', 'currency'])
+    else:
+        conn = common.db_connection()
+        if max_date is None:
+            str_sql = f"SELECT ticker, ex_date, payable_date, dvd_amount, currency FROM dividends WHERE ex_date >= '{min_date.strftime('%Y-%m-%d')}' and ticker IN {conn.list_to_sql_str(equity_list, convert_elements=True)};"
+        else:
+            str_sql = f"SELECT ticker, ex_date, payable_date, dvd_amount, currency FROM dividends WHERE ex_date >= '{min_date.strftime('%Y-%m-%d')}' and ex_date <= '{max_date.strftime('%Y-%m-%d')}' and ticker IN {conn.list_to_sql_str(equity_list, convert_elements=True)};"
+        return conn.query_tbl(str_sql)
+
+
 
 
 # Date Range Input
