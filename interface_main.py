@@ -1,6 +1,4 @@
 import datetime as dt
-from pandas.tseries.offsets import BDay
-
 from PyQt5 import QtCore, QtWidgets
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
@@ -9,7 +7,13 @@ from PyQt5.QtGui import QFont
 import os
 cur_dir = os.path.dirname(__file__)
 import sys
-
+sys.path.append('Z:\\ApolloGX')
+if "\\im_dev\\" in cur_dir:
+    import im_dev.std_lib.common as common
+else:
+    import im_prod.std_lib.common as common
+    
+    
 # Backtest Popup after running on all inputs
 class BackTestResults(QDialog):
     def __init__(self, message, parent=None):
@@ -50,14 +54,14 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Date Range Selection
         self.dateedit1 = QDateEdit(self, calendarPopup=True)
-        self.dateedit1.setDateTime(dt.datetime.today() - BDay(5))
-        self.dateedit1.setMaximumDate(dt.datetime.today() - BDay(1))
+        self.dateedit1.setDateTime(common.workday(dt.datetime.today(), -5))
+        self.dateedit1.setMaximumDate(common.workday(dt.datetime.today(), -1))
         self.dateedit1.dateChanged.connect(self.update_label)
         self.dateedit1.move(80, 10)
         
         self.dateedit2 = QDateEdit(self, calendarPopup=True)
         self.dateedit2.setDateTime(QtCore.QDateTime.currentDateTime())
-        self.dateedit2.setMaximumDate(dt.datetime.today() - BDay(1))
+        self.dateedit2.setMaximumDate(common.workday(dt.datetime.today(), -1))
         self.dateedit2.dateChanged.connect(self.update_label)
         self.dateedit2.move(260, 10)
         

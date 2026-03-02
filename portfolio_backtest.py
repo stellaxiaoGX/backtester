@@ -8,7 +8,29 @@ if "\\im_dev\\" in cur_dir:
     import im_dev.std_lib.common as common
 else:
     import im_prod.std_lib.common as common
+    
 
+
+class Portfolio():
+    """ Every backtest is initiated with a portfolio. Reads and parses the configuration csv + inputs from the interface """
+    
+    def __init__(self, underlying_ticker:str, starting_pos:int, start_dt:dt.date(), end_dt:dt.date(), cur:str="CAD", liquid_threshold:float=0.05):
+        self.underlying = ULAsset(underlying_ticker, cur)
+        self.cash = Cash(starting_pos, cur)
+        self.start_dt = start_dt
+        self.end_dt = end_dt
+        self.currency = cur
+        self.liquidity = liquid_threshold # liquidity of starting cash not allocated
+        return
+        
+    def daily_market_value_calc(self, today:dt.date()):
+        return
+    
+    def run_backtest(self):    
+        return
+    
+    def visualize_backtest(self):
+        return
 
 class Option():
     def __init__(self, p_c:str, underly:str, mat_date:dt.date(), strike:float, pos:int, covg:float, DTM:int, moneyness:float, cur:str="CAD"):
@@ -83,24 +105,7 @@ class Cash():
         self.overnight_rate = 0.025
 
 
-class Portfolio():
-    def __init__(self, underlying_ticker:str, starting_pos:int, start_dt:dt.date(), end_dt:dt.date(), cur:str="CAD", liquid_threshold:float=0.05):
-        self.underlying = ULAsset(underlying_ticker, cur)
-        self.cash = Cash(starting_pos, cur)
-        self.start_dt = start_dt
-        self.end_dt = end_dt
-        self.currency = cur
-        self.liquidity = liquid_threshold # liquidity of starting cash not allocated
-        return
-        
-    def daily_market_value_calc(self, today:dt.date()):
-        return
-    
-    def run_backtest(self):    
-        return
-    
-    def visualize_backtest(self):
-        return
+
 
 
 today = dt.datetime.now()
