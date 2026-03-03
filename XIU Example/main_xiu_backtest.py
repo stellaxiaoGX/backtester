@@ -12,14 +12,11 @@ else:
     import im_prod.std_lib.common as common
 
 
-
 def maturity(portfolio, date):
     return True
 
-
 def ex(portfolio, date):
     return True
-
 
 
 def get_div_data(equity_list=list, min_date:dt.datetime=dt.datetime.now(), max_date:dt.datetime=None):
@@ -48,7 +45,7 @@ call_universe = fetch_data(ticker, (start.strftime('%Y-%m-%d'), end.strftime('%Y
 put_universe = fetch_data(ticker, (start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')), "put", 0.01)
 
 # read and parse portfolio input into dataframe
-port = pd.read_csv(r"C:\Users\sxiao\backtester\XIU Example\XIU put call parity.csv")
+port = pd.read_csv(r"C:\Users\sxiao\backtester\portfolio_config\put call parity.csv")
 port.set_index(port.columns[0], inplace=True)
 
 starting = port.loc["cash", 'ALLOC']

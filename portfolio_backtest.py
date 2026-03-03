@@ -10,12 +10,23 @@ else:
     import im_prod.std_lib.common as common
     
 
+port = pd.read_csv(r"C:\Users\sxiao\backtester\portfolio_config\put call parity.csv")
 
 class Portfolio():
-    """ Every backtest is initiated with a portfolio. Reads and parses the configuration csv + inputs from the interface """
-    
-    def __init__(self, underlying_ticker:str, starting_pos:int, start_dt:dt.date(), end_dt:dt.date(), cur:str="CAD", liquid_threshold:float=0.05):
-        self.underlying = ULAsset(underlying_ticker, cur)
+    """ 
+    Every backtest is initiated by a starting portfolio. 
+    The Portfolio class is for reading and parsing the configuration csv + all inputs from the user interface.
+    Input: Config Dataframe csv + User Interface Inputs
+    Output: Initialized Day 0 portfolio dataframe ready for backtesting
+    """
+    def __init__(self, config:pd.DataFrame, underlying_ticker:str, country_code:str, start_dt:dt.date(), end_dt:dt.date()):
+        
+        ul = underlying_ticker+" "+country_code+" Equity"
+        cur = config['CUR']
+        
+        
+        self.db = common.db_connectio()
+        self.underlying = ULAsset(ul, cur)
         self.cash = Cash(starting_pos, cur)
         self.start_dt = start_dt
         self.end_dt = end_dt
@@ -26,7 +37,7 @@ class Portfolio():
     def daily_market_value_calc(self, today:dt.date()):
         return
     
-    def run_backtest(self):    
+    def run_backtest(self):
         return
     
     def visualize_backtest(self):
