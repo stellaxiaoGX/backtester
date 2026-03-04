@@ -9,8 +9,13 @@ if "\\im_dev\\" in cur_dir:
 else:
     import im_prod.std_lib.common as common
     
-
+# TESTING PARAMS
+start_dt = dt.date(2025,1,1)
+end_dt = dt.date(2025,4,30)
 config = pd.read_csv(r"C:\Users\sxiao\backtester\portfolio_config\put call parity.csv")
+underlying_ticker = "XIU"
+country_code = "CN"
+
 
 class Portfolio():
     """ 
@@ -21,28 +26,60 @@ class Portfolio():
     """
     def __init__(self, config:pd.DataFrame, underlying_ticker:str, country_code:str, start_dt:dt.date(), end_dt:dt.date()):
         
-        self.db = common.db_connectio()
+        self.db = common.db_connection()
         
         port = config.set_index(config.columns[0], inplace=True)
         ul_ticker = underlying_ticker+" "+country_code+" Equity"
         cur = port.loc['cash', 'CUR']
-        starting = config['cash', 'ALLOC']
-        while start_dt in common.tsx_holidays():
-            start_dt = common.workday(start_dt, 1)
+        starting_cash = config['cash', 'ALLOC']
+        
+        if country_code == "CN":
+            while start_dt in common.tsx_holidays():
+                start_dt = common.workday(start_dt, 1)
+        elif country_code == "US":
+            while start_dt in common.nyse_holidays():
+                start_dt = common.workday(start_dt, 1)
         
         self.underlying = ULAsset(ul_ticker, cur)
-        self.cash = Cash(starting, cur)
+        self.cash = Cash(starting_cash, cur)
         self.start_dt = start_dt
         self.end_dt = end_dt
         self.currency = cur
+        self.options = []
+        
+        for sec in port['SEC_ID']:
+            if sec != 'cash' and sec != 'underlying':
+                option = Option()
+                self.options.append()
+        
         initialized = port.copy()
         initialized['DATE'] = self.start_dt
         initialized.loc['underlying', 'TICKER'] = ul_ticker
-        initialized.loc['cash', 'SEC NAME'] = "CAD"
-        initialized['RATE'] = 0.0225
         
+        if country_code == "CN":
+            initialized.loc['cash', 'SEC_NAME'] = "CAD"
+            initialized['RATE'] = 0
+        elif country_code == "US":
+            initialized.loc['cash', 'SEC_NAME'] = "CAD"
+            initialized['RATE'] = 0.0375
+        
+        if self.start_dt.toPyDate().weekday() == 4: #Friday
+            pass
+        else:
+            self.start_dt.toPyDate().weekday()
+            
         self.portfolio = initialized
+        print(initialized)
         
+    def overnight_rates(self, date:dt.date):
+        if self.currency == "CAD":
+            rates_df = pd.read_csv(r"C:\Users\sxiao\backtester\interest rates\canrates.csv")
+        elif self.currency == "USD":
+            rates_df = pd.read_csv(r"C:\Users\sxiao\backtester\interest rates\usrates.csv")
+        rates_df['date'] = pd.to_datetime(rates_df['date'])
+        rates = rates_df[(rates_df['date'] <= self.end_dt) | (rates_df['date'] >= self.start_dt)]
+        return rates
+    
     def daily_market_value_calc(self, today:dt.date()):
         return
     

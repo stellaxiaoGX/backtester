@@ -54,7 +54,7 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Date Range Selection
         self.dateedit1 = QDateEdit(self, calendarPopup=True)
-        self.dateedit1.setDateTime(common.workday(dt.datetime.today(), -5))
+        self.dateedit1.setDateTime(common.workday(dt.datetime.today(), -40))
         self.dateedit1.setMaximumDate(common.workday(dt.datetime.today(), -1))
         self.dateedit1.dateChanged.connect(self.update_label)
         self.dateedit1.move(80, 10)
@@ -162,14 +162,16 @@ class MainWindow(QtWidgets.QMainWindow):
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
 
     def update_label(self):
+        self.dateedit1.setMaximumDate(common.workday(self.dateedit2.date().toPyDate(), -1))
+        
         self.start_date = self.dateedit1.date()
         self.end_date = self.dateedit2.date()
-        if self.dateedit1.date() > self.dateedit2.date():
-            self.check_dates_label.setText("Warning: start date must be before end date.")
+        if common.workday(self.dateedit1.date().toPyDate(), 20) > self.dateedit2.date():
+            self.check_dates_label.setText("Please choose a longer backtest period for best results.")
             self.check_dates_label.setStyleSheet("color: red;")
         else:
-            formatted_start_date = self.dateedit1.date().toString("yyyy-dd-MM")
-            formatted_end_date = self.dateedit2.date().toString("yyyy-dd-MM")
+            formatted_start_date = self.dateedit1.date().toString("yyyy-MM-dd")
+            formatted_end_date = self.dateedit2.date().toString("yyyy-MM-dd")
             self.check_dates_label.setText(f"Selected Date Range: {formatted_start_date} to {formatted_end_date}")
             self.check_dates_label.setStyleSheet("color: black;")
         
