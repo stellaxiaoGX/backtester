@@ -29,7 +29,7 @@ class Portfolio():
         self.db = common.db_connection()
         
         port = config.set_index(config.columns[0], inplace=True)
-        ul_ticker = underlying_ticker+" "+country_code+" Equity"
+        ul_ticker = underlying_ticker+" "+country_code
         cur = port.loc['cash', 'CUR']
         starting_cash = config['cash', 'ALLOC']
         
@@ -47,30 +47,56 @@ class Portfolio():
         self.currency = cur
         self.options = []
         
-        for sec in port['SEC_ID']:
-            if sec != 'cash' and sec != 'underlying':
-                option = Option()
-                self.options.append()
-        
         initialized = port.copy()
         initialized['DATE'] = self.start_dt
-        initialized.loc['underlying', 'TICKER'] = ul_ticker
+        initialized.loc['underlying', 'TICKER'] = ul_ticker+" Equity"
         
-        if country_code == "CN":
+        if country_code == "CN" or cur == "CAD":
             initialized.loc['cash', 'SEC_NAME'] = "CAD"
-            initialized['RATE'] = 0
-        elif country_code == "US":
-            initialized.loc['cash', 'SEC_NAME'] = "CAD"
-            initialized['RATE'] = 0.0375
+
+        elif country_code == "US" or cur == "USD":
+            pass
         
         if self.start_dt.toPyDate().weekday() == 4: #Friday
             pass
         else:
-            self.start_dt.toPyDate().weekday()
-            
-        self.portfolio = initialized
-        print(initialized)
+            days_til_fri = 4 - self.start_dt.toPyDate().weekday()
+            next_fri = common.workday(self.start_dt, days_til_fri)
         
+        for index, row in port.iterrows():
+            if index != 'cash' and index != 'underlying':
+                option = Option_Chain(index, row['SEC_TYPE'].split(" ")[0], ul_ticker, row['ALLOC'], row['DTM'], row['MONEYNESS'], row['CUR'])
+                self.options.append(option)
+                # first option of the option chain: nearest friday
+                selected_option = option.select_option(next_fri)
+                initialized.loc[index, 'SEC_NAME'] = selected_option[0]
+                initialized.loc[index, 'TICKER'] = selected_option[0]
+                initialized.loc[index, 'PRICE'] = selected_option[1]
+                
+        self.initial_positions()
+        
+        print(initialized)
+        self.portfolio = initialized
+        
+        # MAIN BACKTEST LOOP
+        
+        while date < self.end_dt:
+            return
+        
+    
+    def initial_option_positions(self, cash_available):
+        """
+        Iterative algorithm that determines the optimized position for all options and the 
+        """
+        cash = self.cash.position
+        for option in self.options:
+            if option.coverage < 0: # sell options
+                pass
+            else: #buy optionss
+                pass
+            
+
+
     def overnight_rates(self, date:dt.date):
         if self.currency == "CAD":
             rates_df = pd.read_csv(r"C:\Users\sxiao\backtester\interest rates\canrates.csv")
@@ -89,36 +115,36 @@ class Portfolio():
     def visualize_backtest(self):
         return
 
-class Option():
-    def __init__(self, p_c:str, underly:str, mat_date:dt.date(), strike:float, pos:int, covg:float, DTM:int, moneyness:float, cur:str="CAD"):
+class Option_Chain():
+    def __init__(self, sec_id:str, put_call:str, underly:str, covg:float, DTM:int, moneyness:float, cur:str="CAD"):        
+        self.id = sec_id
+        self.put_call = put_call
         self.ticker = underly
-        self.put_call = p_c
-        self.maturity = mat_date
-        self.strike = strike
-        self.position = pos
         self.currency = cur
         self.coverage = covg
         self.dtm = DTM
         self.moneyness = moneyness
     
-    def is_maturity_date(self, today:dt.date()):
+    def select_option(self, roll_date:dt.date):
+        self.maturity = roll_date
+        selected_option = None
+
+        option_univ = self.download_options(self.ticker, roll_date, roll_date)
+        for opt in option_univ:
+            selected_option = None
+  
+        
+
+    def is_maturity_date(self, today:dt.date:
         if today == self.mat_date:
             return True
         else:
             return False
     
-    def roll_option(self, today:dt.date()):
+    def roll_option(self, today:dt.date:
         return
         
-    def select_option(self, today:dt.date()):
-        selected_option = None
 
-        option_univ = self.download_options(self.ticker, today, today)
-        for opt in option_univ:
-            selected_option = None
-
-        
-        return selected_option
     
     def download_options(self, ticker: str, start_date:str, end_date:str):
 
@@ -159,14 +185,3 @@ class Cash():
     def __init__(self, pos, cur:str="CAD"):
         self.position = pos
         self.currency = cur
-        self.overnight_rate = 0.025
-
-
-
-
-
-today = dt.datetime.now()
-
-start = common.workday(today, -90)
-end = common.workday(today, -1)
-
