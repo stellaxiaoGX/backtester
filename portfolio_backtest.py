@@ -11,12 +11,6 @@ if "\\im_dev\\" in cur_dir:
 else:
     import im_prod.std_lib.common as common
     
-# TESTING PARAMS
-start_dt = dt.date(2025,1,1)
-end_dt = dt.date(2025,4,30)
-config = pd.read_csv(r"C:\Users\sxiao\backtester\portfolio_config\put call parity.csv")
-underlying_ticker = "XIU"
-country_code = "CN"
 
 
 class Portfolio():
@@ -26,70 +20,92 @@ class Portfolio():
     Input: Config Dataframe csv + User Interface Inputs
     Output: Initialized Day 0 portfolio dataframe ready for backtesting
     """
-    def __init__(self, config:pd.DataFrame, underlying_ticker:str, country_code:str, start_dt:dt.date(), end_dt:dt.date()):
-        port = config.set_index(config.columns[0], inplace=True)
-        ul_ticker = underlying_ticker+" "+country_code
-        cur = port.loc['cash', 'CUR']
-        starting_cash = config['cash', 'ALLOC']
+    def __init__(self, config:pd.DataFrame, underlying_ticker:str, country_code:str, start_dt:dt.date, end_dt:dt.date):
+        config.set_index(config.columns[0], inplace=True)
+        ul_ticker = underlying_ticker
+        cur = config.loc['cash', 'CUR']
+        starting_cash = config.loc['cash', 'ALLOC']
         
         if country_code == "US":
             holidays = common.nyse_holidays()
+            holidays = pd.to_datetime(list(holidays.keys()), format='ISO8601').date
             while start_dt in holidays:
                 start_dt = common.workday(start_dt, 1, holidays)
             while end_dt in holidays:
                 end_dt = common.workday(end_dt, -1, holidays)
         else:
             holidays = common.tsx_holidays()
+            holidays = pd.to_datetime(list(holidays.keys()), format='ISO8601').date
             while start_dt in holidays:
                 start_dt = common.workday(start_dt, 1)
             while end_dt in holidays:
                 end_dt = common.workday(end_dt, -1)
         
-        self.db = common.db_connection()
-        self.underlying = ULAsset(ul_ticker, cur)
+        self.underlying = ULAsset(ul_ticker+" "+country_code, cur)
         self.cash = starting_cash
         self.start_dt = start_dt
         self.end_dt = end_dt
         self.currency = cur
         self.country_code = country_code
-        self.rates = self.overnight_rate()
+        self.rates = self.overnight_rates()
         self.options = []
         
-        initialized = port.copy()
+        initialized = config.copy()
         initialized['DATE'] = self.start_dt
-        initialized.loc['underlying', 'TICKER'] = ul_ticker+" Equity"
-        
-        if self.country_code == "CN" or self.currency == "CAD":
-            initialized.loc['cash', 'SEC_NAME'] = "CAD"
-
-        elif country_code == "US" or cur == "USD":
-            pass
+        initialized.loc['underlying', 'TICKER'] = ul_ticker+" "+country_code+" Equity"
+        initialized.loc['cash', 'SEC_NAME'] = self.currency
         
         # NEED TO ACCOUNT FOR FRIDAY HOLIDAY
-        if self.start_dt.toPyDate().weekday() == 4: #Friday
+        if self.start_dt.weekday() == 4: #Friday
             next_fri = common.workday(self.start_dt, 5)
         else:
-            days_til_fri = 4 - self.start_dt.toPyDate().weekday()
+            days_til_fri = 4 - self.start_dt.weekday()
             next_fri = common.workday(self.start_dt, days_til_fri)
         
         # Iterate options and initialize each option chain
         # Select the first option of the chain
-        for index, row in port.iterrows():
+        for index, row in config.iterrows():
             if index != 'cash' and index != 'underlying':
                 option = Option_Chain(index, row['SEC_TYPE'].split(" ")[0].lower(), underlying_ticker, row['ALLOC'], row['DTM'], row['MONEYNESS'], row['CUR'])
                 # first option of the option chain: nearest friday
                 selected_option = option.select_option(self.start_dt, next_fri)
                 initialized.loc[index, 'SEC_NAME'] = selected_option[0]
                 initialized.loc[index, 'TICKER'] = selected_option[0]
-                initialized.loc[index, 'PRICE'] = selected_option[1]
+                initialized.loc[index, 'PRICE'] = option.option_mid
+                initialized.loc['underlying', 'PRICE'] = selected_option[1]
                 self.options.append(option)
         
-        day_0_pos = self.initial_positions()
-
-
+        initialized.loc['cash', 'PRICE'] = 1
+        initialized.loc['underlying', 'SEC_NAME'] = ul_ticker
+        initialized.drop(["DTM", "MONEYNESS", "ALLOC"], axis='columns')
         self.portfolio = initialized
+
+        # DAY 0 TRADES + QTY & MV Columns + SUMMARY ROW
+        day0_alloc = self.initial_positions()
+        if day0_alloc['status'] == "Optimization failed":
+            shares = round(self.cash*0.9/initialized.loc['underlying', 'PRICE'], -2)
+        else:
+            shares = round(day0_alloc['allocations'][0], -2)
         
+        initialized['QTY'] = None
+        initialized['MV'] = None
         
+        initialized.loc['underlying', 'QTY'] = shares
+        ul_price = initialized.loc['underlying', 'PRICE']
+        self.cash -= shares*ul_price
+        for option in self.options:
+            option_qty = round(option.coverage*shares, -2)
+            initialized.loc[option.id, 'QTY'] = option_qty
+            self.cash -= option_qty*option.option_mid
+        
+        initialized.loc['cash', 'QTY'] = self.cash
+        initialized['MV'] = initialized['QTY']*initialized['PRICE']
+        
+        initialized.loc['summary'] = {'SEC_TYPE': 'total portfolio', 
+                                      'CUR': self.currency,
+                                      'DATE': self.start_dt,
+                                      'MV': initialized['MV'].sum()}
+        self.day0_portfolio = initialized
         
         
         
@@ -102,28 +118,33 @@ class Portfolio():
             iter_date = common.workday(iter_date, 1, holidays)
         
     
-    def initial_positions(self):
+    def initial_positions(self, liquid_buffer:float=0.05):
         """
         Linear Program to find optimized initial starting positions for all share and option allocations 
         """
         cash = self.cash
-        ul_price = self.underlying.price(self.start_dt)
-        liquid_buffer = 0.05
-        
+        df = self.portfolio
+        ul_price = df.loc['underlying', 'PRICE']
+        spending_per_share = ul_price
+        for option in self.options:
+            spending_per_share -= option.coverage*option.option_mid
+                
         # Example: Allocate cash to maximize shares bought while meeting liquidity buffer limit
         # Maximize: X (shares)
         # Subject to:
         #   (price_per_share + 50%*call_price - 50%*put_price)X <= 950000
         #   X >= 0
+        
         c = [1]
         c = np.array(c, dtype=float)
-        A_ub = [[(ul_price)]] # Spending equation for every share, need to include every option in the portfolio
+        A_ub = [[(spending_per_share)]] # Spending equation for every share, need to include every option in the portfolio
         b_ub = [cash*(1-liquid_buffer)]
         bounds = [(0, None)]
 
         # linprog minimizes, so we negate c to maximize
         result = linprog(-c, A_ub=A_ub, b_ub=b_ub, A_eq=None, b_eq=None, bounds=bounds, method='highs')
-
+        
+        print(result)
         if result.success:
             return {
                 "status": "Optimal solution found",
@@ -135,20 +156,17 @@ class Portfolio():
                 "status": "Optimization failed",
                 "message": result.message
             }
-        
-        print(result)
-
 
     def overnight_rates(self):
         if self.currency == "CAD":
             rates_df = pd.read_csv(r"C:\Users\sxiao\backtester\interest rates\canrates.csv")
         elif self.currency == "USD":
             rates_df = pd.read_csv(r"C:\Users\sxiao\backtester\interest rates\usrates.csv")
-        rates_df['date'] = pd.to_datetime(rates_df['date'])
-        rates = rates_df[(rates_df['date'] <= self.end_dt) | (rates_df['date'] >= self.start_dt)]
+        rates_df['date'] = pd.to_datetime(rates_df['date'], format='ISO8601').dt.date
+        rates = rates_df[(rates_df['date'] <= self.end_dt) & (rates_df['date'] >= self.start_dt)]
         return rates
     
-    def daily_market_value_calc(self, today:dt.date()):
+    def daily_market_value_calc(self, today:dt.date):
         return
     
     def run_backtest(self):
@@ -175,6 +193,7 @@ class Option_Chain():
         self.option_bid = None
         self.option_ask = None
         self.option_last = None
+        self.option_mid = None
     
     def select_option(self, roll_date:dt.date, exp_date:dt.date):
         selected_option = None
@@ -184,10 +203,11 @@ class Option_Chain():
         ask = None
         last = None
         
-        option_univ = self.download_options(self.ticker, self.put_call, roll_date, roll_date)
+        option_univ = self.download_options(self.ticker, roll_date, roll_date)
+        ul_row = option_univ.loc[option_univ['Symbol'] == self.ticker]
+        ul_price= ul_row.loc[0, 'Last Price']
+        
         option_univ = option_univ[option_univ['Expiry Date'] == exp_date.strftime("%Y-%m-%d")]
-        ul_price = option_univ.set_index(option_univ['Symbol'], inplace=True).iloc[self.ticker, 'Last Price']
-
         option_univ = option_univ[option_univ['Call/Put'] == self.put_call]
         
         if self.put_call == 0:
@@ -209,7 +229,8 @@ class Option_Chain():
         self.option_bid = bid
         self.option_ask = ask
         self.option_last = last
-        return [selected_option, bid if self.buy_sell == -1 else ask]
+        self.option_mid = (bid + ask)/2
+        return [selected_option, ul_price]
     
 
     def is_maturity_date(self, date:dt.date):
@@ -250,10 +271,20 @@ class ULAsset():
         return
     
     
-    def is_ex_date(self, today:dt.date()):
+    def is_ex_date(self, today:dt.date):
         return False
     
-    def next_ex_date(self, today:dt.date()):
+    def next_ex_date(self, today:dt.date):
         next_ex = dt.date(2026, 2, 27)
         return next_ex
+    
+    
+# TESTING PARAMS
+start_dt = dt.date(2025,1,1)
+end_dt = dt.date(2025,4,30)
+config = pd.read_csv(r"C:\Users\sxiao\backtester\portfolio_config\put call parity.csv")
+underlying_ticker = "XIU"
+country_code = "CN"
+
+test = Portfolio(config, underlying_ticker, country_code, start_dt, end_dt)
     
