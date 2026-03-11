@@ -28,24 +28,24 @@ class Portfolio():
         
         if country_code == "US":
             holidays = common.nyse_holidays()
-            holidays = pd.to_datetime(list(holidays.keys()), format='ISO8601').date
-            while start_dt in holidays:
+            self.holidays = pd.to_datetime(list(holidays.keys()), format='ISO8601').date
+            while start_dt in self.holidays:
                 start_dt = common.workday(start_dt, 1, holidays)
-            while end_dt in holidays:
+            while end_dt in self.holidays:
                 end_dt = common.workday(end_dt, -1, holidays)
         else:
             holidays = common.tsx_holidays()
-            holidays = pd.to_datetime(list(holidays.keys()), format='ISO8601').date
-            while start_dt in holidays:
+            self.holidays = pd.to_datetime(list(holidays.keys()), format='ISO8601').date
+            while start_dt in self.holidays:
                 start_dt = common.workday(start_dt, 1)
-            while end_dt in holidays:
+            while end_dt in self.holidays:
                 end_dt = common.workday(end_dt, -1)
         
-        self.underlying = ULAsset(ul_ticker+" "+country_code, cur)
         self.cash = starting_cash
         self.start_dt = start_dt
         self.end_dt = end_dt
         self.currency = cur
+        self.underlying = ULAsset(ul_ticker+" "+country_code, start_dt, end_dt, cur)
         self.country_code = country_code
         self.rates = self.overnight_rates()
         self.options = []
@@ -76,9 +76,10 @@ class Portfolio():
                 self.options.append(option)
         
         initialized.loc['cash', 'PRICE'] = 1
+        initialized.loc['cash', 'TICKER'] = self.currency
         initialized.loc['underlying', 'SEC_NAME'] = ul_ticker
-        initialized.drop(["DTM", "MONEYNESS", "ALLOC"], axis='columns')
-        self.portfolio = initialized
+        initialized = initialized.drop(["DTM", "MONEYNESS", "ALLOC"], axis='columns')
+        self.init_portfolio = initialized
 
         # DAY 0 TRADES + QTY & MV Columns + SUMMARY ROW
         day0_alloc = self.initial_positions()
@@ -86,6 +87,7 @@ class Portfolio():
             shares = round(self.cash*0.9/initialized.loc['underlying', 'PRICE'], -2)
         else:
             shares = round(day0_alloc['allocations'][0], -2)
+        self.shares = shares
         
         initialized['QTY'] = None
         initialized['MV'] = None
@@ -105,17 +107,63 @@ class Portfolio():
                                       'CUR': self.currency,
                                       'DATE': self.start_dt,
                                       'MV': initialized['MV'].sum()}
-        self.day0_portfolio = initialized
+        self.portfolio = initialized
+        self.backtest()
         
         
+    def backtest(self):
+        trade_log = self.portfolio
         
-        # MAIN BACKTEST LOOP
-        iter_date = self.start_dt
-
+        # MAIN BACKTEST LOOP: Start at Day 1
+        iter_date = common.workday(self.start_dt, 1)
         while iter_date < self.end_dt:
+            self.portfolio['DATE'] = iter_date
+            # Fetch data for the iterated date and update portfolio
+            self.portfolio.loc['underlying', 'PRICE'] = self.underlying.prices[iter_date]
+            # CHECKS:
+            # Dividend Pay check: Reinvested in underlying security
             
+            # Options expiring check: Roll option if true
+            # Account for in the money and out the money changes
+                
+            for option in self.options:
+                if option.is_maturity_date(iter_date):
+                    if option.itm():
+                        pass
+                    else:
+                        pass
+                    
+                    # SELL (-1) CALL (0)
+                    
+                    # BUY (1) CALL (0)
+                    
+                    # SELL (-1) PUT (1)
+                    
+                    # BUY (1) PUT (1)
+                    next_roll_date = common.workday(iter_date, option.map_maturity(option.dtm))
+                    while next_roll_date in self.holidays:
+                        next_roll_date = common.workday(next_roll_date, -1)
+                    roll_option = option.roll_option(iter_date, next_roll_date)
+                    self.portfolio.loc[option.id, 'SEC_NAME'] = roll_option[0]
+                    self.portfolio.loc[option.id, 'TICKER'] = roll_option[0]
+                    self.portfolio.loc[option.id, 'PRICE'] = option.option_mid
+                    self.portfolio.loc['underlying', 'PRICE'] = roll_option[1]
+                    option_qty = round(option.coverage*self.shares, -2)
+                    self.portfolio.loc[option.id, 'QTY'] = option_qty
+                    self.cash -= option_qty*option.option_mid
+                    
+                else:
+                    continue
+            # Ex Date Check
+            if self.ex_date(iter_date):
+                pass
             
-            iter_date = common.workday(iter_date, 1, holidays)
+            # Calculate EOD MV and append new table.
+            self.portfolio.loc['summary']
+            
+            trade_log = pd.concat([trade_log, self.portfolio], axis=0)            
+            # Move to next business day
+            iter_date = common.workday(iter_date, 1)
         
     
     def initial_positions(self, liquid_buffer:float=0.05):
@@ -123,7 +171,7 @@ class Portfolio():
         Linear Program to find optimized initial starting positions for all share and option allocations 
         """
         cash = self.cash
-        df = self.portfolio
+        df = self.init_portfolio
         ul_price = df.loc['underlying', 'PRICE']
         spending_per_share = ul_price
         for option in self.options:
@@ -165,15 +213,6 @@ class Portfolio():
         rates_df['date'] = pd.to_datetime(rates_df['date'], format='ISO8601').dt.date
         rates = rates_df[(rates_df['date'] <= self.end_dt) & (rates_df['date'] >= self.start_dt)]
         return rates
-    
-    def daily_market_value_calc(self, today:dt.date):
-        return
-    
-    def run_backtest(self):
-        return
-    
-    def visualize_backtest(self):
-        return
 
 class Option_Chain():
     def __init__(self, sec_id:str, put_call:str, underly:str, covg:float, DTM:int, moneyness:float, cur:str="CAD"):        
@@ -239,10 +278,17 @@ class Option_Chain():
         else:
             return False
     
-    def roll_option(self, date:dt.date):
-        return
-        
-
+    def roll_option(self, roll_date:dt.date, exp_date:dt.date):
+        selected_option = self.select_option(roll_date, exp_date)
+        return selected_option
+    
+    def map_maturity(self, dtm:str):
+        dtm_map = {'W': 5,
+                   'M': 20,
+                   'Q': 60,
+                   'S': 120,
+                   'Y': 240}
+        return dtm_map[dtm]
     
     def download_options(self, ticker: str, start_date:str, end_date:str):
 
@@ -257,29 +303,35 @@ class Option_Chain():
                 print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
                 return pd.DataFrame()
 
-    
     def option_buy_back(self):
-        return
+        pass
     
 
 class ULAsset():
-    def __init__(self, ticker:str, cur:str="CAD"):
+    def __init__(self, ticker:str, start_dt:dt.date, end_dt:dt.date, cur:str="CAD"):
         self.ticker = ticker
         self.currency = cur
+        self.ex_dates = self.ex_dates(start_dt, end_dt)
+        self.price_data = self.prices(start_dt, end_dt)
+        self.div_dates = self.divid_dates(start_dt, end_dt)
         
-    def fetch_ex_dates(self):
-        return
-    
-    
+        
     def is_ex_date(self, today:dt.date):
         return False
+        
+    def prices(self, start_dt:dt.date, end_d:dt.date):
+        pass
+        
+    def ex_dates(self, start_dt:dt.date, end_dt:dt.date):
+        return
     
-    def next_ex_date(self, today:dt.date):
-        next_ex = dt.date(2026, 2, 27)
-        return next_ex
+    def divid_dates(self, start_dt:dt.date, end_dt:dt.date):
+        pass
+
+
     
     
-# TESTING PARAMS
+# EXAMPLE PARAMS - PUT CALL PARITY FOR XIU
 start_dt = dt.date(2025,1,1)
 end_dt = dt.date(2025,4,30)
 config = pd.read_csv(r"C:\Users\sxiao\backtester\portfolio_config\put call parity.csv")
