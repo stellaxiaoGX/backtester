@@ -214,6 +214,19 @@ class Portfolio():
         rates = rates_df[(rates_df['date'] <= self.end_dt) & (rates_df['date'] >= self.start_dt)]
         return rates
 
+class covered_call():
+    def __init__(self, sec_id):
+        self.id = sec_id
+        
+        
+        
+        
+class naked_put():
+    def __init__(self, sec_id):
+        self.id = sec_id
+
+
+
 class Option_Chain():
     def __init__(self, sec_id:str, put_call:str, underly:str, covg:float, DTM:int, moneyness:float, cur:str="CAD"):        
         self.id = sec_id
@@ -302,10 +315,6 @@ class Option_Chain():
             except:
                 print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
                 return pd.DataFrame()
-
-    def option_buy_back(self):
-        pass
-    
 
 class ULAsset():
     def __init__(self, ticker:str, start_dt:dt.date, end_dt:dt.date, cur:str="CAD"):
