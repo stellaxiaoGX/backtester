@@ -4,6 +4,7 @@ import yfinance as yf
 import os
 cur_dir = os.path.dirname(__file__)
 import sys
+import copy
 sys.path.append('Z:\\ApolloGX')
 if "\\im_dev\\" in cur_dir:
     import im_dev.std_lib.common as common
@@ -126,6 +127,31 @@ def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
         print(f"Error fetching data: {e}")
         return pd.DataFrame()
 
+def group_options(legs: list[Leg]):
+    """ Bucket different option legs by expiring date/dtm and option type/direction """
+    buckets = {}
+    for l in legs:
+        if l.instrument != "option":
+            continue
+        key = l.expiry
+        if key not in buckets:
+            buckets[key] = {
+                "long_calls": [],
+                "short_calls": [],
+                "long_puts": [],
+                "short_puts": [],
+            }
+
+        if l.option_type == "call" and l.side == "long":
+            buckets[key]["long_calls"].append(copy.deepcopy(l))
+        elif l.option_type == "call" and l.side == "short":
+            buckets[key]["short_calls"].append(copy.deepcopy(l))
+        elif l.option_type == "put" and l.side == "long":
+            buckets[key]["long_puts"].append(copy.deepcopy(l))
+        elif l.option_type == "put" and l.side == "short":
+            buckets[key]["short_puts"].append(copy.deepcopy(l))
+    return buckets
+
 
 class Portfolio():
     """ 
@@ -206,11 +232,76 @@ class Portfolio():
             self.option_legs.append(option)
             
         
-    def config_dependencies(self):
+    def vertical_dependencies(self):
         """
         Parses through the set of option legs initialized and determine dependencies based on expiry date matches
         """
-        return
+        # Expand temporary list of copied legs with new "qty" from ratio for internal math
+        tmp = []
+        for l in legs:
+            t = copy.deepcopy(l)
+            t.qty = l.ratio
+            tmp.append(t)
+        # uses helper to segment by expiry date and option type into buckets
+        buckets = group_options(tmp)
+        m_call, m_put = {}, {}
+        rem_sc, rem_sp = {}, {}
+        
+        # sort all different option positions by moneyness
+        for exp, group in buckets.items():
+            scalls = sorted(group["short_calls"], key=lambda x: x.strike)
+            lcalls = sorted(group["long_calls"], key=lambda x: x.strike)
+            sputs  = sorted(group["short_puts"],  key=lambda x: -x.strike)
+            lputs  = sorted(group["long_puts"],   key=lambda x: -x.strike)
+            
+            # long calls: tally up the different long call positions
+            avail_lc = {}
+            for lc in lcalls:
+                avail_lc[lc.strike] += lc.qty
+                
+            # long puts: tally up the different long put positions
+            avail_lp = {}
+            for lp in lputs:
+                avail_lp[lp.strike] += lp.qty
+
+            # Short calls covered by long calls with strike >= short strike
+            for sc in scalls:
+                remain = sc.qty
+                for k in sorted([k for k in avail_lc if k >= sc.strike]):
+                    if remain <= 0:
+                        break
+                    take = min(remain, avail_lc[k])
+                    if take <= 0:
+                        continue
+                    avail_lc[k] -= take
+                    remain -= take
+                    sc_leg = copy.deepcopy(sc); sc_leg.qty = take
+                    lc_leg = copy.deepcopy([lc for lc in lcalls if lc.strike == k][0]); lc_leg.qty = take
+                    m_call[exp].append((sc_leg, lc_leg, take))
+                if remain > 0:
+                    leftover = copy.deepcopy(sc); leftover.qty = remain
+                    rem_sc[exp].append(leftover)
+
+            # Short puts covered by long puts with strike <= short strike
+            for sp in sputs:
+                remain = sp.qty
+                for k in sorted([k for k in avail_lp if k <= sp.strike], reverse=True):
+                    if remain <= 0:
+                        break
+                    take = min(remain, avail_lp[k])
+                    if take <= 0:
+                        continue
+                    avail_lp[k] -= take
+                    remain -= take
+                    sp_leg = copy.deepcopy(sp); sp_leg.qty = take
+                    lp_leg = copy.deepcopy([lp for lp in lputs if lp.strike == k][0]); lp_leg.qty = take
+                    m_put[exp].append((sp_leg, lp_leg, take))
+                if remain > 0:
+                    leftover = copy.deepcopy(sp); leftover.qty = remain
+                    rem_sp[exp].append(leftover)
+
+        return m_call, m_put, rem_sc, rem_sp
+        
     
     def allocate_cash(self):
         """
@@ -238,4 +329,4 @@ if __name__ == "__main__":
     config_path = r"C:\Users\sxiao\backtester\portfolio_config\option_legs.csv"
     
     port = Portfolio(config_path, underlying_ticker, country_code, start_dt, end_dt, base_cash)
-    legs = port.option_legs    
+    legs = port.option_legs 
