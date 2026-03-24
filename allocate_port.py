@@ -1,6 +1,7 @@
 import datetime as dt
 import pandas as pd
 import yfinance as yf
+import json
 import os
 cur_dir = os.path.dirname(__file__)
 import sys
@@ -194,7 +195,7 @@ class Portfolio():
         self.equity_ticker = self.ticker+" "+self.country_code+" Equity"
         self.ul_prices = closing_prices(self.ticker, self.country_code, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
         
-        # Inputs preprocessing: Option Legs Dataframe -> Dictionary with selected options
+        # Inputs preprocessing: Option Legs Dataframe -> dictionary with selected options
         config = pd.read_csv(config_path)
         cols_lst = ['SEC_ID', 'TYPE', 'POS', 'DTM', 'MONEYNESS', 'RATIO', 'PRICE', 'STRIKE', 'EXPIRY', 'SECURED']
         config = config.reindex(columns=config.columns.tolist() + [c for c in cols_lst if c not in config.columns], fill_value=None)
@@ -230,86 +231,151 @@ class Portfolio():
             option_leg.select_option(self.ticker, nearest_fri, expiry_date)
             option = option_leg.to_dict()
             self.option_legs.append(option)
-            
-        
-    def vertical_dependencies(self):
-        """
-        Parses through the set of option legs initialized and determine dependencies based on expiry date matches
-        """
-        # Expand temporary list of copied legs with new "qty" from ratio for internal math
-        tmp = []
-        for l in legs:
-            t = copy.deepcopy(l)
-            t.qty = l.ratio
-            tmp.append(t)
-        # uses helper to segment by expiry date and option type into buckets
-        buckets = group_options(tmp)
-        m_call, m_put = {}, {}
-        rem_sc, rem_sp = {}, {}
-        
-        # sort all different option positions by moneyness
-        for exp, group in buckets.items():
-            scalls = sorted(group["short_calls"], key=lambda x: x.strike)
-            lcalls = sorted(group["long_calls"], key=lambda x: x.strike)
-            sputs  = sorted(group["short_puts"],  key=lambda x: -x.strike)
-            lputs  = sorted(group["long_puts"],   key=lambda x: -x.strike)
-            
-            # long calls: tally up the different long call positions
-            avail_lc = {}
-            for lc in lcalls:
-                avail_lc[lc.strike] += lc.qty
-                
-            # long puts: tally up the different long put positions
-            avail_lp = {}
-            for lp in lputs:
-                avail_lp[lp.strike] += lp.qty
 
-            # Short calls covered by long calls with strike >= short strike
-            for sc in scalls:
-                remain = sc.qty
-                for k in sorted([k for k in avail_lc if k >= sc.strike]):
-                    if remain <= 0:
-                        break
-                    take = min(remain, avail_lc[k])
-                    if take <= 0:
-                        continue
-                    avail_lc[k] -= take
-                    remain -= take
-                    sc_leg = copy.deepcopy(sc); sc_leg.qty = take
-                    lc_leg = copy.deepcopy([lc for lc in lcalls if lc.strike == k][0]); lc_leg.qty = take
-                    m_call[exp].append((sc_leg, lc_leg, take))
-                if remain > 0:
-                    leftover = copy.deepcopy(sc); leftover.qty = remain
-                    rem_sc[exp].append(leftover)
+# Allocation classes
+class ScaleParams:
+    """
+    Scaling configuration.
+    - base_cash: total cash available to initialize
+    - spot: underlying spot of stock
+    - cash_buffer: unallocated cash
+    """
+    def __init__(self,
+                 base_cash: float,
+                 spot: float,
+                 cash_buffer: float = 0.0):
+        self.base_cash = float(base_cash)
+        self.spot = float(spot)
+        self.cash_buffer = float(cash_buffer)
 
-            # Short puts covered by long puts with strike <= short strike
-            for sp in sputs:
-                remain = sp.qty
-                for k in sorted([k for k in avail_lp if k <= sp.strike], reverse=True):
-                    if remain <= 0:
-                        break
-                    take = min(remain, avail_lp[k])
-                    if take <= 0:
-                        continue
-                    avail_lp[k] -= take
-                    remain -= take
-                    sp_leg = copy.deepcopy(sp); sp_leg.qty = take
-                    lp_leg = copy.deepcopy([lp for lp in lputs if lp.strike == k][0]); lp_leg.qty = take
-                    m_put[exp].append((sp_leg, lp_leg, take))
-                if remain > 0:
-                    leftover = copy.deepcopy(sp); leftover.qty = remain
-                    rem_sp[exp].append(leftover)
-
-        return m_call, m_put, rem_sc, rem_sp
+class ScaleResult:
+    def __init__(self,
+                 status: str,
+                 units: int,
+                 ending_cash: float,
+                 per_unit: dict[str, any],
+                 totals: dict[str, any],
+                 final_legs: list[dict[str, any]],
+                 diagnostics: dict[str, any]):
+        self.status = status
+        self.units = int(units)
+        self.ending_cash = float(ending_cash)
+        self.per_unit = per_unit
+        self.totals = totals
+        self.final_legs = final_legs
+        self.diagnostics = diagnostics
         
+    def display(self):
+        print("Portfolio successfully allcoated")
+
+
+def normalize_datatype(raw_legs: list[dict[str, any]]) -> list[Leg]:
+    """ Converts raw option leg data into correct datatypes """
+    output: list[Leg] = []
+    for d in raw_legs:
+        lt = Leg(
+            instrument=d["instrument"],
+            side=d["side"],
+            ratio=d.get("ratio", 1),
+            price=d.get("price", 0.0),
+            option_type=d.get("option_type", d.get("type")) if d.get("option_type", d.get("type")) else None,
+            strike=d.get("strike"),
+            expiry=d.get("expiry"),
+            multiplier=d.get("multiplier", 100),
+            label=d.get("label"),
+        )
+        output.append(lt)
+    return output
+
+
+def vertical_dependencies(legs: list[Leg]):
+    """
+    Parses through the set of option legs initialized and determine dependencies based on expiry date matches
+    """
+    # Expand temporary list of copied legs with new "qty" from ratio for internal math
+    tmp = []
+    for l in legs:
+        t = copy.deepcopy(l)
+        t.qty = l.ratio
+        tmp.append(t)
+    # uses helper to segment by expiry date and option type into buckets
+    buckets = group_options(tmp)
+    # Matching Calls, Matching Puts, Remaning Calls, Remaining Puts
+    m_call, m_put = {}, {}
+    rem_sc, rem_sp = {}, {}
     
-    def allocate_cash(self):
-        """
-        Based on initial cash amount and option leg dependencies, determine how to allocate cash into shares 
-        and scale option quantities by ratio optimally without running out of cash flow
-        """
-        return
-                
+    # sort all different option positions by moneyness
+    # Loop for same expiration date
+    for exp, group in buckets.items():
+        scalls = sorted(group["short_calls"], key=lambda x: x.strike)
+        lcalls = sorted(group["long_calls"], key=lambda x: x.strike)
+        sputs  = sorted(group["short_puts"],  key=lambda x: -x.strike)
+        lputs  = sorted(group["long_puts"],   key=lambda x: -x.strike)
+        
+        # long calls: tally up the different long call positions
+        avail_lc = {}
+        for lc in lcalls:
+            avail_lc[lc.strike] += lc.qty
+            
+        # long puts: tally up the different long put positions
+        avail_lp = {}
+        for lp in lputs:
+            avail_lp[lp.strike] += lp.qty
+            
+        # Identify Vertical Call Spread
+        # Short calls covered by long calls with strike >= short strike
+        # parse through long calls to find matching long calls with a higher strike
+        for sc in scalls:
+            remain = sc.qty
+            for k in sorted([k for k in avail_lc if k >= sc.strike]):
+                if remain <= 0:
+                    break
+                take = min(remain, avail_lc[k])
+                if take <= 0:
+                    continue
+                avail_lc[k] -= take
+                remain -= take
+                sc_leg = copy.deepcopy(sc); sc_leg.qty = take
+                lc_leg = copy.deepcopy([lc for lc in lcalls if lc.strike == k][0]); lc_leg.qty = take
+                m_call[exp].append((sc_leg, lc_leg, take))
+            if remain > 0:
+                leftover = copy.deepcopy(sc); leftover.qty = remain
+                rem_sc[exp].append(leftover)
+        
+        # Identify Vertical Put Spread
+        # Short puts covered by long puts with strike <= short strike
+        for sp in sputs:
+            remain = sp.qty
+            for k in sorted([k for k in avail_lp if k <= sp.strike], reverse=True):
+                if remain <= 0:
+                    break
+                take = min(remain, avail_lp[k])
+                if take <= 0:
+                    continue
+                avail_lp[k] -= take
+                remain -= take
+                sp_leg = copy.deepcopy(sp); sp_leg.qty = take
+                lp_leg = copy.deepcopy([lp for lp in lputs if lp.strike == k][0]); lp_leg.qty = take
+                m_put[exp].append((sp_leg, lp_leg, take))
+            if remain > 0:
+                leftover = copy.deepcopy(sp); leftover.qty = remain
+                rem_sp[exp].append(leftover)
+    # return bucketed option groups
+    return m_call, m_put, rem_sc, rem_sp
+        
+
+def scale_and_allocate_cash(raw_legs: list[dict[str, any]], params: ScaleParams) -> ScaleResult:
+    """
+    Based on initial cash amount and option leg dependencies, determine how to allocate cash into shares 
+    and scale option quantities by ratio optimally without running out of cash flow.
+    - Do NOT auto-buy shares to cover uncovered short calls.
+    - For any remaining uncovered shorts (calls or puts) after vertical matching:
+        * Reserve cash = strike × multiplier × contracts (per unit).
+    - Stock legs in the config are honored (ratio shares per unit).
+    """
+    legs = normalize_datatype(raw_legs)
+    
+            
                 
     
 if __name__ == "__main__":
@@ -329,4 +395,21 @@ if __name__ == "__main__":
     config_path = r"C:\Users\sxiao\backtester\portfolio_config\option_legs.csv"
     
     port = Portfolio(config_path, underlying_ticker, country_code, start_dt, end_dt, base_cash)
-    legs = port.option_legs 
+    spot = port.ul_prices[port.start_dt]
+    
+    params = ScaleParams(
+        base_cash=base_cash,
+        spot=spot,
+        cash_buffer=base_cash*0.01, 
+    )
+    result = scale_and_allocate_cash(port.option_legs, params)
+    
+    print(json.dumps({
+        "status": result.status,
+        "units": result.units,
+        "ending_cash": result.ending_cash,
+        "per_unit": result.per_unit,
+        "totals": result.totals,
+        "final_legs": result.final_legs,
+        "diagnostics": result.diagnostics
+    }, indent=2))
