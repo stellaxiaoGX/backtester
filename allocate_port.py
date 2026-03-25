@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import json
 import os
+from collections import defaultdict
 cur_dir = os.path.dirname(__file__)
 import sys
 import copy
@@ -12,12 +13,28 @@ if "\\im_dev\\" in cur_dir:
 else:
     import im_prod.std_lib.common as common
     
-
+class Equity():
+    """
+    underlying equity leg of options.
+    - instrument: "option"
+    - pos: "long"
+    """
+    def __init__(self,
+                 instrument: str = "equity",
+                 pos: str = None,
+                 ticker: str = None,
+                 country: str = None):
+        
+        self.instrument = instrument.lower()
+        self.pos = pos.lower()
+        self.ticker = ticker.upper()
+        self.country = country.upper()
+        
 class Leg():
     """
     back tester input class of an option leg.
     - instrument: "option"
-    - side: "long" | "short"
+    - pos: "long" | "short"
     - ratio: integer to determine qty
     - price: option premium per share
     - option_type: "call" | "put"
@@ -27,7 +44,7 @@ class Leg():
     - secured: optional label parameter to specify whether a short option is naked or secured
     """
     def __init__(self,
-                 instrument: str,
+                 instrument: str = "option",
                  option_type: str = None,
                  pos: str = None,
                  dtm: int = 5,
@@ -113,10 +130,13 @@ class Leg():
 def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
     """ Fetches closing prices for a given ticker symbol. """
     if country_code == "CN":
-        ticker = ticker+".TO"
+        download_ticker = ticker+".TO"
+    else:
+        download_ticker = ticker
     try:
         # Download historical data
-        data = yf.download(ticker, start=start_dt, end=end_dt)['Close']
+        data = yf.download(download_ticker, start=start_dt, end=end_dt)['Close']
+        data.rename(columns={download_ticker:ticker}, inplace=True)
         
         if data.empty:
             print(f"No data found for {ticker} in the given date range.")
@@ -129,7 +149,7 @@ def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
         return pd.DataFrame()
 
 def group_options(legs: list[Leg]):
-    """ Bucket different option legs by expiring date/dtm and option type/direction """
+    """ Bucket different option legs by expiring date/dtm and option type/pos """
     buckets = {}
     for l in legs:
         if l.instrument != "option":
@@ -143,13 +163,13 @@ def group_options(legs: list[Leg]):
                 "short_puts": [],
             }
 
-        if l.option_type == "call" and l.side == "long":
+        if l.option_type == "call" and l.pos == "long":
             buckets[key]["long_calls"].append(copy.deepcopy(l))
-        elif l.option_type == "call" and l.side == "short":
+        elif l.option_type == "call" and l.pos == "short":
             buckets[key]["short_calls"].append(copy.deepcopy(l))
-        elif l.option_type == "put" and l.side == "long":
+        elif l.option_type == "put" and l.pos == "long":
             buckets[key]["long_puts"].append(copy.deepcopy(l))
-        elif l.option_type == "put" and l.side == "short":
+        elif l.option_type == "put" and l.pos == "short":
             buckets[key]["short_puts"].append(copy.deepcopy(l))
     return buckets
 
@@ -193,7 +213,7 @@ class Portfolio():
                 
         # Inputs preprocessing: Ticker + Prices Time Series
         self.equity_ticker = self.ticker+" "+self.country_code+" Equity"
-        self.ul_prices = closing_prices(self.ticker, self.country_code, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
+        self.ul_prices = closing_prices(self.ticker, self.country_code, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")).set_index('Date')
         
         # Inputs preprocessing: Option Legs Dataframe -> dictionary with selected options
         config = pd.read_csv(config_path)
@@ -265,8 +285,34 @@ class ScaleResult:
         self.final_legs = final_legs
         self.diagnostics = diagnostics
         
-    def display(self):
-        print("Portfolio successfully allcoated")
+    
+    def to_dict(self):
+            return {
+                "status": self.status,
+                "units": self.units,
+                "ending_cash": self.ending_cash,
+                "per_unit": serialize(self.per_unit),
+                "totals": serialize(self.totals),
+                "final_legs": serialize(self.final_legs),
+                "diagnostics": serialize(self.diagnostics),
+            }
+
+def serialize(obj):
+    """
+    Recursively convert custom objects (Leg, Equity, etc.) into dicts
+    so they can be JSON-serialized.
+    """
+    if isinstance(obj, Leg):
+        return obj.to_dict()
+    if isinstance(obj, Equity):
+        return obj.__dict__
+    if isinstance(obj, dict):
+        return {k: serialize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [serialize(x) for x in obj]
+    if isinstance(obj, tuple):
+        return [serialize(x) for x in obj]  # JSON has no tuple
+    return obj
 
 
 def normalize_datatype(raw_legs: list[dict[str, any]]) -> list[Leg]:
@@ -275,14 +321,16 @@ def normalize_datatype(raw_legs: list[dict[str, any]]) -> list[Leg]:
     for d in raw_legs:
         lt = Leg(
             instrument=d["instrument"],
-            side=d["side"],
+            option_type=d.get("option_type", d.get("type")) if d.get("option_type", d.get("type")) else None,
+            pos=d["pos"],
+            dtm=d.get("dtm"),
+            moneyness=d.get("moneyness", 0.0),
             ratio=d.get("ratio", 1),
             price=d.get("price", 0.0),
-            option_type=d.get("option_type", d.get("type")) if d.get("option_type", d.get("type")) else None,
             strike=d.get("strike"),
             expiry=d.get("expiry"),
             multiplier=d.get("multiplier", 100),
-            label=d.get("label"),
+            secured=d.get("secured")
         )
         output.append(lt)
     return output
@@ -301,8 +349,8 @@ def vertical_dependencies(legs: list[Leg]):
     # uses helper to segment by expiry date and option type into buckets
     buckets = group_options(tmp)
     # Matching Calls, Matching Puts, Remaning Calls, Remaining Puts
-    m_call, m_put = {}, {}
-    rem_sc, rem_sp = {}, {}
+    m_call, m_put = defaultdict(list), defaultdict(list)
+    rem_sc, rem_sp = defaultdict(list), defaultdict(list)
     
     # sort all different option positions by moneyness
     # Loop for same expiration date
@@ -313,12 +361,12 @@ def vertical_dependencies(legs: list[Leg]):
         lputs  = sorted(group["long_puts"],   key=lambda x: -x.strike)
         
         # long calls: tally up the different long call positions
-        avail_lc = {}
+        avail_lc = defaultdict(int)
         for lc in lcalls:
             avail_lc[lc.strike] += lc.qty
             
         # long puts: tally up the different long put positions
-        avail_lp = {}
+        avail_lp = defaultdict(int)
         for lp in lputs:
             avail_lp[lp.strike] += lp.qty
             
@@ -362,9 +410,12 @@ def vertical_dependencies(legs: list[Leg]):
                 rem_sp[exp].append(leftover)
     # return bucketed option groups
     return m_call, m_put, rem_sc, rem_sp
-        
 
-def scale_and_allocate_cash(raw_legs: list[dict[str, any]], params: ScaleParams) -> ScaleResult:
+def scale_and_allocate_cash(
+    raw_legs: list[dict[str, any]],
+    params: ScaleParams,
+    underlying_ticker: str,
+    country_code: str) -> ScaleResult:
     """
     Based on initial cash amount and option leg dependencies, determine how to allocate cash into shares 
     and scale option quantities by ratio optimally without running out of cash flow.
@@ -373,8 +424,146 @@ def scale_and_allocate_cash(raw_legs: list[dict[str, any]], params: ScaleParams)
         * Reserve cash = strike × multiplier × contracts (per unit).
     - Stock legs in the config are honored (ratio shares per unit).
     """
-    legs = normalize_datatype(raw_legs)
-    
+    """
+    Determine portfolio scale and capital allocation.
+    - Uses ratio-based scaling
+    - Always holds 100 shares of underlying equity per unit
+    - Does NOT auto-buy shares for options coverage
+    - All uncovered short options (calls AND puts) are strike-secured
+    """
+
+    # Normalize option legs
+    option_legs = normalize_datatype(raw_legs)
+
+    # Per-unit option premium
+    net_premium_unit = 0.0
+    for l in option_legs:
+        sign = +1 if l.pos == "short" else -1
+        net_premium_unit += sign * l.price * l.ratio * l.multiplier
+
+    # Equity per unit (fixed assumption)
+    shares_per_unit = 100
+    cash_for_equity_unit = shares_per_unit * params.spot
+
+
+    # Vertical matching
+    m_call, m_put, rem_sc, rem_sp = vertical_dependencies(option_legs)
+
+    # Strike-secured reserves (per unit)
+    cash_reserved_calls_unit = 0.0
+    cash_reserved_puts_unit = 0.0
+
+    call_reserve_details = []
+    put_reserve_details = []
+
+    # Uncovered short calls
+    for exp, lst in rem_sc.items():
+        for sc in lst:
+            reserve = sc.strike * sc.multiplier * sc.qty
+            cash_reserved_calls_unit += reserve
+            call_reserve_details.append({
+                "expiry": exp,
+                "strike": sc.strike,
+                "qty": sc.qty,
+                "reserve": reserve
+            })
+
+    # Uncovered short puts
+    for exp, lst in rem_sp.items():
+        for sp in lst:
+            reserve = sp.strike * sp.multiplier * sp.qty
+            cash_reserved_puts_unit += reserve
+            put_reserve_details.append({
+                "expiry": exp,
+                "strike": sp.strike,
+                "qty": sp.qty,
+                "reserve": reserve
+            })
+
+    # Per-unit capital requirement
+    required_cash_unit = (
+        cash_for_equity_unit
+        + cash_reserved_calls_unit
+        + cash_reserved_puts_unit
+        - net_premium_unit
+    )
+
+    # Scaling by ratio
+    available_cash = params.base_cash - params.cash_buffer
+
+    if required_cash_unit <= 0:
+        # Net credit trade → require explicit cap
+        status = "needs_cap"
+        units = 0
+    else:
+        units = int(max(0, available_cash // required_cash_unit))
+        status = "ok" if units > 0 else "zero_units"
+
+    ending_cash = params.base_cash - (units * required_cash_unit) - params.cash_buffer
+
+    # Final Scaled option legs
+    final_legs = []
+
+    for l in option_legs:
+        final_legs.append({
+            "instrument": "option",
+            "option_type": l.option_type,
+            "pos": l.pos,
+            "strike": l.strike,
+            "expiry": l.expiry,
+            "multiplier": l.multiplier,
+            "price": l.price,
+            "qty": l.ratio * units,
+            "secured": l.secured,
+        })
+
+    # Scaled equity
+    final_legs.append({
+        "instrument": "equity",
+        "pos": "long",
+        "ticker": underlying_ticker,
+        "country": country_code,
+        "qty": shares_per_unit * units,
+        "price": params.spot,
+    })
+
+    # ----------------------------
+    # Diagnostics
+    # ----------------------------
+    per_unit = {
+        "net_premium_unit": round(net_premium_unit, 2),
+        "equity_cash_unit": round(cash_for_equity_unit, 2),
+        "reserved_calls_unit": round(cash_reserved_calls_unit, 2),
+        "reserved_puts_unit": round(cash_reserved_puts_unit, 2),
+        "required_cash_unit": round(required_cash_unit, 2),
+        "uncovered_calls": call_reserve_details,
+        "uncovered_puts": put_reserve_details,
+    }
+
+    totals = {
+        "units": units,
+        "equity_cash_total": round(cash_for_equity_unit * units, 2),
+        "reserved_calls_total": round(cash_reserved_calls_unit * units, 2),
+        "reserved_puts_total": round(cash_reserved_puts_unit * units, 2),
+        "net_premium_total": round(net_premium_unit * units, 2),
+        "ending_cash": round(ending_cash, 2),
+    }
+
+    diagnostics = {
+        "matched_call_spreads": m_call,
+        "matched_put_spreads": m_put,
+        "cash_buffer": params.cash_buffer,
+    }
+
+    return ScaleResult(
+        status=status,
+        units=units,
+        ending_cash=ending_cash,
+        per_unit=per_unit,
+        totals=totals,
+        final_legs=final_legs,
+        diagnostics=diagnostics,
+    )
             
                 
     
@@ -395,21 +584,13 @@ if __name__ == "__main__":
     config_path = r"C:\Users\sxiao\backtester\portfolio_config\option_legs.csv"
     
     port = Portfolio(config_path, underlying_ticker, country_code, start_dt, end_dt, base_cash)
-    spot = port.ul_prices[port.start_dt]
+    spot = port.ul_prices.loc[port.start_dt.strftime("%Y-%m-%d"), port.ticker]
     
     params = ScaleParams(
         base_cash=base_cash,
         spot=spot,
-        cash_buffer=base_cash*0.01, 
+        cash_buffer=base_cash*0.01
     )
-    result = scale_and_allocate_cash(port.option_legs, params)
+    result = scale_and_allocate_cash(port.option_legs, params, port.ticker, port.country_code)
     
-    print(json.dumps({
-        "status": result.status,
-        "units": result.units,
-        "ending_cash": result.ending_cash,
-        "per_unit": result.per_unit,
-        "totals": result.totals,
-        "final_legs": result.final_legs,
-        "diagnostics": result.diagnostics
-    }, indent=2))
+    print(json.dumps(result.to_dict(), indent=2, default=str))
