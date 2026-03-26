@@ -147,6 +147,30 @@ def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
     except Exception as e:
         print(f"Error fetching data: {e}")
         return pd.DataFrame()
+    
+def overnight_rates(country_coe:str, start_dt:str, end_dt:str):
+    """ Fetches overnight rates for a given time period and country code. 
+        You may need to update these csv sheets through rates_refresh.xlsx, csv files are static. """
+    """ only takes Canada (CN) or US (US) for now """
+    try:
+        rates = None
+        if country_code == "CN":
+            rates = pd.read_csv(r"C:\Users\sxiao\OneDrive - Global X\Desktop\backtester\interest rates\canrates.csv")
+        elif country_code == "US":
+            rates = pd.read_csv(r"C:\Users\sxiao\OneDrive - Global X\Desktop\backtester\interest rates\usrates.csv")
+        
+        rates['date'] = pd.to_datetime(rates['date'], format='%Y-%m-%d')
+        rates = rates.set_index('date')
+        rates = rates[(rates.index >= start_dt) & (rates.index <= end_dt)]
+        
+        if rates.empty:
+            print(f"No rates data found for {country_code} in the given date range.")
+            return pd.DataFrame()
+        return rates
+    
+    except Exception as e:
+        print(f"Error fetching data: {e}")
+        return pd.DataFrame()
 
 def group_options(legs: list[Leg]):
     """ Bucket different option legs by expiring date/dtm and option type/pos """
@@ -214,6 +238,7 @@ class Portfolio():
         # Inputs preprocessing: Ticker + Prices Time Series
         self.equity_ticker = self.ticker+" "+self.country_code+" Equity"
         self.ul_prices = closing_prices(self.ticker, self.country_code, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")).set_index('Date')
+        self.on_rates = overnight_rates(self.country_code, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
         
         # Inputs preprocessing: Option Legs Dataframe -> dictionary with selected options
         config = pd.read_csv(config_path)
@@ -259,14 +284,18 @@ class ScaleParams:
     - base_cash: total cash available to initialize
     - spot: underlying spot of stock
     - cash_buffer: unallocated cash
+    - overnight_rate = overnight_rate
     """
     def __init__(self,
                  base_cash: float,
                  spot: float,
-                 cash_buffer: float = 0.0):
+                 cash_buffer: float = 0.0,
+                 overnight_rate: float = 0.0275):
         self.base_cash = float(base_cash)
         self.spot = float(spot)
-        self.cash_buffer = float(cash_buffer)
+        self.cash_buffer = float(cash_buffer)        
+        self.overnight_rate = overnight_rate
+
 
 class ScaleResult:
     def __init__(self,
@@ -332,6 +361,7 @@ def normalize_datatype(raw_legs: list[dict[str, any]]) -> list[Leg]:
             multiplier=d.get("multiplier", 100),
             secured=d.get("secured")
         )
+        lt.current = d.get("current")
         output.append(lt)
     return output
 
@@ -417,19 +447,19 @@ def scale_and_allocate_cash(
     underlying_ticker: str,
     country_code: str) -> ScaleResult:
     """
-    Based on initial cash amount and option leg dependencies, determine how to allocate cash into shares 
+    Based on initial cash amount and option leg dependencies, determine how to allocate cash into:
+        1. Buying (spot) shares for Covered/Secured Short Calls
+        1.5. Reserving (strike) cash for Naked/Unsecured Short Calls
+        2. Reserving (strike) cash for Long Calls
+        3. Reserving (strike) cash for Short Puts
+        4. Buying (spot) shares for Long Puts
+        4.5 Reserving (strike) cash for Long Puts
     and scale option quantities by ratio optimally without running out of cash flow.
-    - Do NOT auto-buy shares to cover uncovered short calls.
     - For any remaining uncovered shorts (calls or puts) after vertical matching:
         * Reserve cash = strike × multiplier × contracts (per unit).
-    - Stock legs in the config are honored (ratio shares per unit).
-    """
-    """
-    Determine portfolio scale and capital allocation.
     - Uses ratio-based scaling
-    - Always holds 100 shares of underlying equity per unit
-    - Does NOT auto-buy shares for options coverage
-    - All uncovered short options (calls AND puts) are strike-secured
+    - Does NOT auto-buy shares for options coverage: based on secured booleon
+    - All uncovered short options (calls AND puts) are strike-secured with cash in the money market
     """
 
     # Normalize option legs
@@ -441,45 +471,73 @@ def scale_and_allocate_cash(
         sign = +1 if l.pos == "short" else -1
         net_premium_unit += sign * l.price * l.ratio * l.multiplier
 
-    # Equity per unit (fixed assumption)
-    shares_per_unit = 100
-    cash_for_equity_unit = shares_per_unit * params.spot
-
-
     # Vertical matching
     m_call, m_put, rem_sc, rem_sp = vertical_dependencies(option_legs)
 
     # Strike-secured reserves (per unit)
     cash_reserved_calls_unit = 0.0
     cash_reserved_puts_unit = 0.0
+    
+    secured_cash_puts_unit = 0.0
+    naked_cash_puts_unit  = 0.0
+    secured_cash_calls_unit = 0.0
+    naked_cash_calls_unit  = 0.0
 
     call_reserve_details = []
     put_reserve_details = []
 
-    # Uncovered short calls
+    # short calls
     for exp, lst in rem_sc.items():
         for sc in lst:
             reserve = sc.strike * sc.multiplier * sc.qty
-            cash_reserved_calls_unit += reserve
+            # secured short calls
+            if sc.secured:
+                reserve = params.spot * sc.multiplier * sc.qty
+                secured_cash_calls_unit += reserve
+                capital_state = "secured"
+            # naked short calls
+            else:
+                reserve = sc.strike * sc.multiplier * sc.qty
+                naked_cash_calls_unit += reserve
+                capital_state = "bond"
             call_reserve_details.append({
                 "expiry": exp,
                 "strike": sc.strike,
                 "qty": sc.qty,
-                "reserve": reserve
+                "secured": sc.secured,
+                "reserve": reserve,
+                "cash_state": capital_state
             })
 
-    # Uncovered short puts
+    # short puts
     for exp, lst in rem_sp.items():
         for sp in lst:
             reserve = sp.strike * sp.multiplier * sp.qty
-            cash_reserved_puts_unit += reserve
+            # secured short puts
+            if sp.secured:
+                secured_cash_puts_unit += reserve
+                capital_state = "secured"
+            # naked short puts
+            else:
+                naked_cash_puts_unit += reserve
+                capital_state = "bond"
             put_reserve_details.append({
                 "expiry": exp,
                 "strike": sp.strike,
                 "qty": sp.qty,
-                "reserve": reserve
-            })
+                "secured": sp.secured,
+                "reserve": reserve,
+                "cash_state": capital_state
 
+            })
+            
+    cash_reserved_calls_unit = secured_cash_calls_unit + naked_cash_calls_unit
+    cash_reserved_puts_unit = secured_cash_puts_unit + naked_cash_puts_unit
+    
+    # Find out how many shares are needed 
+    shares_per_unit = 100
+    cash_for_equity_unit = shares_per_unit * params.spot
+    
     # Per-unit capital requirement
     required_cash_unit = (
         cash_for_equity_unit
@@ -507,6 +565,7 @@ def scale_and_allocate_cash(
     for l in option_legs:
         final_legs.append({
             "instrument": "option",
+            "current option": l.current,
             "option_type": l.option_type,
             "pos": l.pos,
             "strike": l.strike,
@@ -565,7 +624,53 @@ def scale_and_allocate_cash(
         diagnostics=diagnostics,
     )
             
-                
+
+def final_legs_df(result: ScaleResult) -> pd.DataFrame:
+    df = pd.DataFrame(result.final_legs)
+
+    # Optional: reorder columns for clarity
+    preferred_order = [
+        "instrument", "ticker", "country",
+        "option_type", "pos",
+        "strike", "expiry",
+        "qty", "price",
+        "secured"
+    ]
+    cols = [c for c in preferred_order if c in df.columns] + \
+           [c for c in df.columns if c not in preferred_order]
+
+    return df[cols]            
+
+
+def per_unit_df(result: ScaleResult) -> pd.DataFrame:
+    return pd.DataFrame([result.per_unit])
+
+
+def totals_df(result: ScaleResult) -> pd.DataFrame:
+    return pd.DataFrame([result.totals])
+
+
+def matched_spreads_df(result: ScaleResult) -> pd.DataFrame:
+    rows = []
+
+    diagnostics = result.diagnostics
+
+    for spread_type in ["matched_call_spreads", "matched_put_spreads"]:
+        spreads = diagnostics.get(spread_type, {})
+        for expiry, lst in spreads.items():
+            for short_leg, long_leg, qty in lst:
+                rows.append({
+                    "spread_type": spread_type,
+                    "expiry": expiry,
+                    "short_type": short_leg.option_type,
+                    "short_strike": short_leg.strike,
+                    "long_strike": long_leg.strike,
+                    "qty": qty,
+                    "short_symbol": short_leg.current,
+                    "long_symbol": long_leg.current,
+                })
+
+    return pd.DataFrame(rows)
     
 if __name__ == "__main__":
     
@@ -582,15 +687,23 @@ if __name__ == "__main__":
     underlying_ticker = "XIU"
     country_code = "CN"
     config_path = r"C:\Users\sxiao\backtester\portfolio_config\option_legs.csv"
+    config_df = pd.read_csv(config_path)
     
     port = Portfolio(config_path, underlying_ticker, country_code, start_dt, end_dt, base_cash)
     spot = port.ul_prices.loc[port.start_dt.strftime("%Y-%m-%d"), port.ticker]
+    on_rate = port.on_rates.loc[port.start_dt.strftime("%Y-%m-%d")]
     
     params = ScaleParams(
         base_cash=base_cash,
         spot=spot,
-        cash_buffer=base_cash*0.01
+        cash_buffer=base_cash*0.01,
+        overnight_rate=on_rate
     )
     result = scale_and_allocate_cash(port.option_legs, params, port.ticker, port.country_code)
     
     print(json.dumps(result.to_dict(), indent=2, default=str))
+
+    df_final_positions = final_legs_df(result)
+    df_per_unit = per_unit_df(result)
+    df_alloc_totals = totals_df(result)
+    df_matched_spreads = matched_spreads_df(result)
