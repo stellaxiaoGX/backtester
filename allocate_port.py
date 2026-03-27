@@ -97,10 +97,7 @@ class Leg():
         option_univ = option_univ[option_univ['Expiry Date'] == exp_date.strftime("%Y-%m-%d")]
         option_univ = option_univ[option_univ['Call/Put'] == 0] if self.option_type == 'call' else option_univ[option_univ['Call/Put'] == 1]
         
-        if self.option_type == 'call':
-            target_strike = ul_price*(1+self.moneyness)
-        else:
-            target_strike = ul_price*(1-self.moneyness)
+        target_strike = ul_price*(self.moneyness)
         
         closest_strike_index = (option_univ['Strike Price'] - target_strike).abs().idxmin()
         strike = option_univ.loc[closest_strike_index, 'Strike Price']
@@ -686,7 +683,7 @@ if __name__ == "__main__":
     end_dt = dt.date(2025,4,30)
     underlying_ticker = "XIU"
     country_code = "CN"
-    config_path = r"C:\Users\sxiao\backtester\portfolio_config\option_legs.csv"
+    config_path = r"C:\Users\sxiao\OneDrive - Global X\Desktop\backtester\portfolio_config\option_legs.csv"
     config_df = pd.read_csv(config_path)
     
     port = Portfolio(config_path, underlying_ticker, country_code, start_dt, end_dt, base_cash)

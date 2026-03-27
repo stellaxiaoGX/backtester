@@ -1,7 +1,7 @@
 SEC_ID,TYPE,POS,DTM,MONEYNESS,RATIO,SECURED
-option,call,long,5,0.05,1,TRUE
-option,call,short,5,0.05,1,TRUE
-option,call,short,20,0.05,1,TRUE
-option,put,long,5,0.05,1,TRUE
-option,put,short,5,0.1,2,TRUE
-option,put,short,20,0.1,2,FALSE
+option,call,long,5,1.05,1,TRUE
+option,call,short,5,1.1,1,TRUE
+option,call,short,20,1.05,1,TRUE
+option,put,long,5,0.95,1,TRUE
+option,put,short,5,0.9,2,TRUE
+option,put,short,20,0.9,2,FALSE
