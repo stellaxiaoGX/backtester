@@ -48,7 +48,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Final Bottom Button to trigger Backtesting Screen Popup
         self.button = QPushButton("Run Backtest", self)
-        self.button.clicked.connect(self.popup_show_backtest_results)
+        self.button.clicked.connect(self.popup_show_preview)
         self.button.resize(120, 40)
         self.button.move(140, 245)
         
@@ -116,7 +116,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.region_input_box.resize(240, 30)
         self.region_input_box.setPlaceholderText(f" Enter Bloomberg country code ...")
     
-    def popup_show_backtest_results(self):
+    def popup_show_preview(self):
 
         ticker = self.input_box.text()
         country = self.region_input_box.text()
@@ -140,7 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Check if ticker with country code data exists for time range input
         
         # Call Popup and Backtest Module
-        popup = BackTestResults(f"Hello! Here are the backtest results for {ticker}.", self)
+        popup = BackTestResults(f"Here's a preview of the portfolio we compiled. Is this correct?", self)
         popup.exec_()
 
     def select_portfolio_folder(self):
