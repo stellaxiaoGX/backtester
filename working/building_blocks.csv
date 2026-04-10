@@ -1,0 +1,31 @@
+ID,POS,TYPE,AKA,DES,COLLATERAL,CTYPE
+Equity,Long,Equity,Long Equity,Holding shares,None,Debit
+Residual,Long,Bond,Money Market Cash,"Holding Cash that accrues interest. Can be collateral cash, or remaining cash after allocation.",None,Debit
+Single,Long,Call,Long Call,"Holding a Call, the right to buy 100 shares of underlying at strike price on expiry date close",None,Debit
+Single,Short,Call,Write Call (Unsecured),"Writing a Call, take on the obligation to sell 100 shares of underlying at strike price on expiry date close",Cash = Call Qty * 100 shares * Strike,Credit
+Single,Long,Put,Long Put,"Holding a Put, the right to sell 100 shares of underlying at strike price on expiry date close",None,Debit
+Single,Short,Put,Put Write (Cash-Secured),"Writing a Put, take on the obligation to buy 100 shares of underlying strike price at expiry date close",Cash = Put Qty * 100 shares * Strike,Credit
+CC,Long,Equity,Covered Call,"Holding underlying shares, and writing calls on the held shares. Write 1 Call per 100 shares to cover for the possibility of the obligation to sell 100 shares at expiry date close",Covered by Long Equity,Debit
+CC,Short,Call,Covered Call,,,
+Synthetic,Long,Call,Replicate Long Equity,Replicate the position of holding underlying equity by holding a call and writing a put at the same strike and expiry.,Cash = Qty * 100 shares * Strike,Credit
+Synthetic,Short,Put,Replicate Long Equity,,,
+Strangle,Long,Call,Long Strangle,Hold both a call and a put on underlying with the same expiry date and different OTM strikes. Capitalizes on significant volatility and price movements in either direction,Cash = Qty * 100 shares * Higher Strike,Credit
+Strangle,Long,Put,Long Strangle,,,
+Strangle,Short,Call,Short Strangle,Write both a call and a put on underlying with the same expiry date and different OTM strikes. Capitalizes on little volatility and price movements in either direction,Cash = Qty * 100 shares * Higher Strike,Credit
+Strangle,Short,Put,Short Strangle,,,
+IC,Long,Call,Long Iron Condor,"Consists of 2 spreads, a Bull Call Spread and a Bear Put Spread. Profits from higher volatility.","Cash =  Qty * 100 shares* Max[Puts Strike Difference, Calls Strike Difference]",Credit
+IC,Short,Call,Long Iron Condor,,,
+IC,Long,Put,Long Iron Condor,,,
+IC,Short,Put,Long Iron Condor,,,
+IC,Long,Call,Short Iron Condor,"Consists of 2 spreads, a Bear Call Spread and a Bull Put Spread. Profits from low volatility.","Cash =  Qty * 100 shares* Max[Puts Strike Difference, Calls Strike Difference]",Credit
+IC,Short,Call,Short Iron Condor,,,
+IC,Long,Put,Short Iron Condor,,,
+IC,Short,Put,Short Iron Condor,,,
+Spread,Long,Call,Bull Call Spread,"Hold a call and write one for the same expiry date, at different strike prices. The Bull Call Spread has short call with the higher strike price and profits from an increase in the underlying price.",Cash = Qty * 100 shares * (Higher Strike - Lower Strike),Credit
+Spread,Short,Call,Bull Call Spread,,,
+Spread,Long,Call,Bear Call Spread,"Hold a call and write one for the same expiry date, at different strike prices. The Bear Call Spread has short call with the lower strike price and profits off of a flat or moderate decline in underlying price.",Cash = Qty * 100 shares * (Higher Strike - Lower Strike),Credit
+Spread,Short,Call,Bear Call Spread,,,
+Spread,Long,Put,Bull Put Spread,Hold a put and write one for the same expiry date at different strike prices. The Bull Put Spread has short put with the higher strike price and profits from a flat or moderate increase in underlying price.,Cash = Qty * 100 shares * (Higher Strike - Lower Strike),Credit
+Spread,Short,Put,Bull Put Spread,,,
+Spread,Long,Put,Bear Put Spread,Hold a put and write one for the same expiry date at different strike prices. The Bear Put Spread has short put with the lower strike price and profits from a slow decline in underlying price.,Cash = Qty * 100 shares * (Higher Strike - Lower Strike),Credit
+Spread,Short,Put,Bear Put Spread,,,
