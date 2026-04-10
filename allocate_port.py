@@ -1,12 +1,9 @@
 import datetime as dt
 import pandas as pd
 import yfinance as yf
-import json
 import os
-from collections import defaultdict
 cur_dir = os.path.dirname(__file__)
 import sys
-import copy
 sys.path.append('Z:\\ApolloGX')
 if "\\im_dev\\" in cur_dir:
     import im_dev.std_lib.common as common
@@ -15,127 +12,207 @@ else:
     
 class Equity():
     """
-    underlying equity leg of options.
-    - instrument: "option"
-    - pos: "long"
+    underlying equity leg
+    - asset: "equity"
+    - direction: 1 | -1 for long or short
     """
     def __init__(self,
-                 instrument: str = "equity",
-                 pos: str = None,
+                 asset: str = "equity",
+                 direction: int = None,
+                 weight: float = None,
+                 shares: int = None,
+
                  ticker: str = None,
-                 country: str = None):
+                 country: str = None,
+                 start_dt: dt.date = None,
+                 end_dt: dt.date = None):
         
-        self.instrument = instrument.lower()
-        self.pos = pos.lower()
-        self.ticker = ticker.upper()
-        self.country = country.upper()
-        
-class Leg():
+        self.asset = asset.lower()
+        if isinstance(direction, str):
+            self.direction = 1 if direction.lower() in ("1", "+1", "long") else -1
+        else:
+            self.direction = int(direction) if direction is not None else None
+        self.weight = float(weight)
+        self.shares = shares
+        self.ticker = ticker.upper() if ticker else None
+        self.country = country.upper() if country else None
+        self.start_dt = start_dt
+        self.end_dt = end_dt   
+
+class Residual():
     """
-    back tester input class of an option leg.
-    - instrument: "option"
-    - pos: "long" | "short"
-    - ratio: integer to determine qty
-    - price: option premium per share
+    money market bond leg AKA Residual cash allocation: earns daily interest, used to secure short option legs
+    - asset: "bond"
+    - direction: 1 for long only
+    """
+    def __init__(self,
+                 asset: str = "bond",
+                 cash: float = None,
+                 ticker: str = None,
+                 country: str = None,
+                 start_dt: dt.date = None,
+                 end_dt: dt.date = None):
+        
+        self.asset = asset.lower()
+        self.cash = cash
+        self.ticker = ticker.upper() if ticker else None
+        self.country = country.upper() if country else None
+        self.start_dt = start_dt
+        self.end_dt = end_dt
+        self.rates_series = self.download_rates(self.ticker, self.country, self.start_dt.strftime("%Y-%m-%d"), self.end_dt.strftime("%Y-%m-%d"))
+    
+    def download_rates(self, ticker: str, country_code:str, start_dt: str, end_dt: str):
+        """ Fetches historical interest rates given time frame and country. """
+        if country_code.lower() == "cn":
+            rates_file_path = os.path.join(cur_dir, "interest rates", "canrates.csv")
+        else:
+            rates_file_path = os.path.join(cur_dir, "interest rates", "usrates.csv")
+        try:
+            # Load the rates CSV file
+            df = pd.read_csv(rates_file_path)
+            df['date'] = pd.to_datetime(df['date']).dt.date
+            
+            # Filter by desired time frame
+            start_dt_obj = pd.to_datetime(start_dt).date()
+            end_dt_obj = pd.to_datetime(end_dt).date()
+            
+            filtered_rates = df[(df['date'] >= start_dt_obj) & (df['date'] <= end_dt_obj)]
+            
+            if filtered_rates.empty:
+                print(f"No rates found for {country_code} in the given date range.")
+                return pd.DataFrame()
+            
+            self.rates_series = filtered_rates.reset_index(drop=True)
+            return self.rates_series
+        
+        except Exception as e:
+            print(f"Error fetching rates: {e}")
+            return pd.DataFrame()
+    
+class OptionLeg:
+    """
+    General option leg.
+
+    Inputs:
+    - asset: "option"
     - option_type: "call" | "put"
+    - direction: 1 | -1 for long or short
+    - dtm: days to maturity (e.g., 30 for monthly options)
+    - moneyness: percentage away from the money (e.g., 1.05 for 5% OTM call, 0.95 for 5% OTM put)
+
+    Other variables:
+    - price: option premium per share
     - strike: float 
     - expiry: "YYYY-MM-DD"
-    - multiplier: 100 by default
-    - secured: optional label parameter to specify whether a short option is naked or secured
+    - multiplier: 100 (by default, standard contract multiplier)
+
     """
     def __init__(self,
-                 instrument: str = "option",
+                 asset: str = "option",
                  option_type: str = None,
-                 pos: str = None,
+                 direction: int = 1,
                  dtm: int = 5,
                  moneyness: float = 0.0,
-                 ratio: int = 1,
+                 
                  price: float = 0.0,
                  strike: float = None,
                  expiry: dt.date = None,
-                 multiplier: int = 100,
-                 secured: bool = False):
+                 multiplier: int = 100):
         
-        self.instrument = instrument.lower()
+        self.asset = asset.lower()
         self.option_type = option_type.lower()
-        self.pos = pos.lower()
+        self.direction = direction
         self.dtm = int(dtm)
         self.moneyness = float(moneyness)
-        self.ratio = int(ratio)
         self.price = float(price)
-        self.strike = float(strike)
-        self.expiry = expiry
+        self.strike = None # default to None when no option chosen
+        self.expiry = expiry # default to None when no option chosen
         self.multiplier = int(multiplier)
-        self.secured = secured
         
         self.current = None
 
-        if self.option_type not in ["call", "put"]:
+        if self.option_type not in ["c", "p"]:
             raise ValueError(f"Option leg missing/invalid option_type: {self.__dict__}")
-        if self.expiry is None or self.strike is None:
-            raise ValueError(f"Option leg must have expiry & strike: {self.__dict__}")
-    
-    def to_dict(self):
-        return {'instrument': self.instrument,
-                'option_type': self.option_type,
-                'pos': self.pos,
-                'dtm': self.dtm,
-                'moneyness': self.moneyness,
-                'ratio': self.ratio,
-                'price': self.price,
-                'strike': self.strike,
-                'expiry': self.expiry,
-                'multiplier': self.multiplier,
-                'secured': self.secured,
-                'current': self.current}
-    
-    def select_option(self, ticker: str, roll_date:dt.date, exp_date:dt.date):
-        
+        if self.direction not in [1, -1]:
+            raise ValueError(f"Option leg invalid direction: {self.direction}; expected 1 or -1")
+
+    def select_option(self, ticker: str, roll_date:dt.date, holidays):
+        exp_date = self._calculate_expiry(roll_date, holidays)
         option_univ = self.download_options(ticker, roll_date, roll_date)
         ul_row = option_univ.loc[option_univ['Symbol'] == ticker]
-        ul_price= ul_row.loc[0, 'Last Price']
+        ul_price = ul_row.loc[0, 'Last Price']
         option_univ = option_univ[option_univ['Expiry Date'] == exp_date.strftime("%Y-%m-%d")]
-        option_univ = option_univ[option_univ['Call/Put'] == 0] if self.option_type == 'call' else option_univ[option_univ['Call/Put'] == 1]
-        
-        if self.option_type == 'call':
-            target_strike = ul_price*(1+self.moneyness)
-        else:
-            target_strike = ul_price*(1-self.moneyness)
-        
+        option_univ = option_univ[option_univ['Call/Put'] == 0] if self.option_type == 'c' else option_univ[option_univ['Call/Put'] == 1]
+
+        target_strike = ul_price * self.moneyness
         closest_strike_index = (option_univ['Strike Price'] - target_strike).abs().idxmin()
         strike = option_univ.loc[closest_strike_index, 'Strike Price']
         selected_option = option_univ.loc[closest_strike_index, 'Symbol']
         expiry = option_univ.loc[closest_strike_index, 'Expiry Date']
         bid = option_univ.loc[closest_strike_index, 'Bid Price']
         ask = option_univ.loc[closest_strike_index, 'Ask Price']
-        
+
         self.current = selected_option
-        self.price = bid if self.pos == 'long' else ask
+        # Long positions pay the ask price; short positions receive the bid price.
+        price = None
+        if self.direction == 1:
+            price = ask if pd.notna(ask) and ask > 0 else bid
+        else:
+            price = bid if pd.notna(bid) and bid > 0 else ask
+
+        if (price is None or (isinstance(price, float) and pd.isna(price))) and pd.notna(bid) and pd.notna(ask):
+            price = (bid + ask) / 2
+
+        self.price = float(price) if price is not None and pd.notna(price) else 0.0
         self.strike = strike
         self.expiry = expiry
-        
+
+    def _calculate_expiry(self, roll_date: dt.date, holidays):
+        def next_friday(date):
+            if date.weekday() == 4:
+                candidate = common.workday(date, 5, holidays)
+            else:
+                candidate = common.workday(date, 4 - date.weekday(), holidays)
+            while candidate in holidays or candidate.weekday() > 4:
+                candidate = common.workday(candidate, -1, holidays)
+            return candidate
+
+        if self.dtm == 5:
+            expiry = next_friday(roll_date)
+        else:
+            target = roll_date + dt.timedelta(days=self.dtm)
+            weekday = target.weekday()
+            days_to_friday = 4 - weekday
+            expiry = target + dt.timedelta(days=days_to_friday)
+            while expiry in holidays:
+                expiry = expiry - dt.timedelta(days=7)
+        return expiry
+
     def download_options(self, ticker: str, start_date:str, end_date:str):
         download_html = f"https://www.m-x.ca/en/trading/data/historical?symbol={ticker.lower()}&from={start_date}&to={end_date}&dnld=1#quotes"
         current_att = 0
         while current_att < 8:
             try:
                 df_download = common.download_from_url(download_html)
-                print(f"Downloaded data for {ticker} from {start_date} to {end_date}")
+                print(f"Downloaded option data for {ticker} from {start_date} to {end_date}")
                 return df_download
             except:
                 print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
                 return pd.DataFrame()
 
-
 def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
     """ Fetches closing prices for a given ticker symbol. """
-    if country_code == "CN":
+    if country_code.lower() == "cn":
         download_ticker = ticker+".TO"
     else:
         download_ticker = ticker
     try:
         # Download historical data
-        data = yf.download(download_ticker, start=start_dt, end=end_dt)['Close']
+        ticker_obj = yf.Ticker(download_ticker)
+        
+        # Download historical data
+        data = ticker_obj.history(start=start_dt, end=end_dt)['Close']
+        #data = yf.download(download_ticker, start=start_dt, end=end_dt)['Close']
         data.rename(columns={download_ticker:ticker}, inplace=True)
         
         if data.empty:
@@ -145,55 +222,319 @@ def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
         return closing_prices
     
     except Exception as e:
-        print(f"Error fetching data: {e}")
-        return pd.DataFrame()
+        print(f"Error fetching data for {ticker}: {e}")
+        #return pd.DataFrame()
+        manual_prices = pd.read_csv(os.path.join(cur_dir, "xiu.csv"))
+        manual_prices['Date'] = pd.to_datetime(manual_prices['Date']).dt.date
+        manual_prices = manual_prices[(manual_prices['Date'] >= pd.to_datetime(start_dt).date()) & (manual_prices['Date'] <= pd.to_datetime(end_dt).date())]
+        return manual_prices
+    
+#------------------------------STRATEGY BUILDING BLOCK CLASSES---------------------------------------------------------------------------------    
 
-def group_options(legs: list[Leg]):
-    """ Bucket different option legs by expiring date/dtm and option type/pos """
-    buckets = {}
-    for l in legs:
-        if l.instrument != "option":
-            continue
-        key = l.expiry
-        if key not in buckets:
-            buckets[key] = {
-                "long_calls": [],
-                "short_calls": [],
-                "long_puts": [],
-                "short_puts": [],
-            }
+class OptionStrategy:
+    def __init__(self, strategy_id="Generic", name=None, underlying=None):
+        self.strategy_id = strategy_id
+        self.name = name or strategy_id
+        self.underlying = underlying
+        self.legs = []
 
-        if l.option_type == "call" and l.pos == "long":
-            buckets[key]["long_calls"].append(copy.deepcopy(l))
-        elif l.option_type == "call" and l.pos == "short":
-            buckets[key]["short_calls"].append(copy.deepcopy(l))
-        elif l.option_type == "put" and l.pos == "long":
-            buckets[key]["long_puts"].append(copy.deepcopy(l))
-        elif l.option_type == "put" and l.pos == "short":
-            buckets[key]["short_puts"].append(copy.deepcopy(l))
-    return buckets
+    def add_leg(self, leg):
+        self.legs.append(leg)
 
+    def __str__(self):
+        legs_desc = []
+        for leg in self.legs:
+            if leg.asset.lower() == "option":
+                contracts = getattr(self, 'contracts', 'n/a')
+                option_type_full = 'Call' if getattr(leg, 'option_type', '').lower() == 'c' else 'Put'
+                desc = f"{('Long' if leg.direction == 1 else 'Short')} {option_type_full} {contracts} contracts @{getattr(leg, 'strike', 'n/a')} expiring {getattr(leg, 'expiry', 'n/a')}"
+            elif leg.asset.lower() == "equity":
+                shares = getattr(self, 'shares', 'n/a')
+                price = getattr(self, 'underlying_spot', 'n/a')
+                price_str = f"{price:.2f}" if price != 'n/a' else 'n/a'
+                desc = f"{('Long' if leg.direction == 1 else 'Short')} {shares} shares of {leg.ticker} @{price_str}"
+            elif leg.asset.lower() == "bond":
+                ticker = getattr(leg, 'ticker', 'Money Market')
+                cash = getattr(leg, 'cash', None)
+                cash_str = f"{cash:.2f}" if cash is not None else 'n/a'
+                desc = f"{ticker} ${cash_str}"
+            legs_desc.append(desc)
+            
+        return f"{self.name} ({self.strategy_id}): {', '.join(legs_desc)}"
+
+class Single(OptionStrategy):
+    """A single option leg. Expects only one line"""
+    def __init__(self, leg: OptionLeg, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
+        super().__init__(strategy_id="Single", name="Single Option")
+        self.add_leg(leg)
+        self.weight = weight
+        self.underlying_spot = underlying_spot
+        if self.weight is not None:
+            target_notional = self.weight * base_cash  # Default base_cash
+        self.contracts = target_notional / (self.underlying_spot * self.legs[0].multiplier)
+        self.contracts = int(self.contracts)  # Round down to nearest whole contract
+
+    def notional_value(self):
+        """Determine number of contracts using weight.Calculate notional value: spot * multiplier * contracts."""
+        option_leg = self.legs[0]
+        return self.underlying_spot * option_leg.multiplier * self.contracts
+
+    def collateral_required(self):
+        """Collateral for short options: strike * multiplier * contracts for short call/put."""
+        option_leg = self.legs[0]
+        if option_leg.direction == -1:
+            return option_leg.strike * option_leg.multiplier * self.contracts
+        return 0
+
+    def cash_flow(self):
+        """Calculate total premiums paid/received for the option leg."""
+        option_leg = self.legs[0]
+        return option_leg.price * self.contracts * option_leg.direction * -1 # Premiums paid are negative cash flow, received are positive cash flow
+
+class EquityStrategy(OptionStrategy):
+    """A pure equity position strategy. Determine number of shares using weight and underlying spot price."""
+    def __init__(self, equity_leg: Equity, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
+        super().__init__(strategy_id="Equity", name="Equity Shares", underlying=equity_leg.ticker)
+        self.add_leg(equity_leg)
+        self.weight = weight
+        self.underlying_spot = underlying_spot
+        self.shares = (self.weight * base_cash) / self.underlying_spot if self.weight is not None else None
+        self.shares = int(self.shares)  # Round down to nearest whole share
+
+    def notional_value(self):
+        """Notional value: weight * base_cash (+ allocated to shares)."""
+        if self.weight:
+            return self.shares * self.underlying_spot
+        return 0
+
+    def collateral_required(self):
+        """Equity positions require no collateral."""
+        return 0
+    
+    def cash_flow(self):
+        """Calculate total cash flow for the equity leg."""
+        equity_leg = self.legs[0]
+        return self.shares * self.underlying_spot * equity_leg.direction * -1 # Buying shares is negative cash flow, selling shares is positive cash flow
+
+class BondStrategy(OptionStrategy):
+    """Residual is leftover cash at the end of allocation, in which case everything is put into money market."""
+    def __init__(self, residual_leg: Residual):
+        name = "Collateral" if residual_leg.ticker is None else f"{residual_leg.ticker} Cash"
+        super().__init__(strategy_id="Residual", name=name)
+        self.add_leg(residual_leg)
+
+    def notional_value(self):
+        """Notional value: cash amount allocated."""
+        residual_leg = self.legs[0]
+        if residual_leg.cash:
+            return residual_leg.cash
+        return 0
+
+    def collateral_required(self):
+        """Residual cash requires no collateral."""
+        return 0
+
+    def cash_flow(self):
+        """Calculate total cash flow for the residual leg."""
+        residual_leg = self.legs[0]
+        return residual_leg.cash * -1 # Allocating cash is negative cash flow
+
+class CoveredCall(OptionStrategy):
+    """A covered call strategy expecting 1 equity leg and 1 short call leg."""
+    def __init__(self, equity_leg: Equity, call_leg: OptionLeg, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
+        super().__init__(strategy_id="CC", name="Covered Call", underlying=equity_leg.ticker)
+        self.add_leg(equity_leg)
+        self.add_leg(call_leg)
+        self.weight = weight
+        self.underlying_spot = underlying_spot
+        if self.weight is not None:
+            target_notional = self.weight * base_cash  # Default base_cash
+            self.shares = target_notional / call_leg.strike
+            self.shares = int(self.shares)  # Round down to nearest whole share
+            self.contracts = self.shares / call_leg.multiplier
+            self.contracts = int(self.contracts)  # Round down to nearest whole contract
+
+    def notional_value(self):
+        """Notional value is the strike * multiplier * contracts."""
+        call_leg = next(l for l in self.legs if isinstance(l, OptionLeg) and l.direction == -1)
+        if call_leg:
+            return call_leg.strike * call_leg.multiplier * self.contracts
+        return 0
+
+    def collateral_required(self):
+        """Covered call has no collateral requirement (short call covered by equity)."""
+        return 0
+    
+    def cash_flow(self):
+        """Calculate total cash flow for the covered call strategy. Earn premiums from short call, pay for equity shares."""
+        equity_leg = next(l for l in self.legs if isinstance(l, Equity))
+        call_leg = next(l for l in self.legs if isinstance(l, OptionLeg) and l.direction == -1)
+        equity_cash_flow = self.shares * self.underlying_spot * equity_leg.direction * -1 # Buying shares is negative cash flow
+        call_cash_flow = call_leg.price * self.contracts * call_leg.direction * -1 # Premiums received from short call are positive cash flow
+        return equity_cash_flow + call_cash_flow
+
+class Spread(OptionStrategy):
+    """A spread strategy with 2 option legs. Expects 1 long leg and 1 short leg of the same option type."""
+    def __init__(self, long_leg: OptionLeg, short_leg: OptionLeg, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
+        super().__init__(strategy_id="Spread", name="Spread")
+        self.add_leg(long_leg)
+        self.add_leg(short_leg)
+        self.spread_type = f"{long_leg.option_type.upper()} Spread"
+        self.weight = weight
+        self.underlying_spot = underlying_spot
+        if self.weight is not None:
+            target_notional = self.weight * base_cash  # Default base_cash
+            self.contracts = target_notional / (self.underlying_spot * short_leg.multiplier)
+            self.contracts = int(self.contracts)  # Round down to nearest whole contract
+
+    def notional_value(self):
+        """Notional value based on underlying spot price * multiplier * contracts."""
+        return self.underlying_spot * self.legs[0].multiplier * self.contracts
+
+    def collateral_required(self):
+        """Collateral for spread: max_loss = |short_strike - long_strike| * multiplier."""
+        long_leg = next(l for l in self.legs if l.direction == 1)
+        short_leg = next(l for l in self.legs if l.direction == -1)
+        strike_diff = abs(short_leg.strike - long_leg.strike)
+        return strike_diff * long_leg.multiplier * self.contracts
+    
+    def cash_flow(self):
+        """Calculate total cash flow for the spread strategy. Pay premium for long leg, receive premium for short leg."""
+        long_leg = next(l for l in self.legs if l.direction == 1)
+        short_leg = next(l for l in self.legs if l.direction == -1)
+        long_cash_flow = long_leg.price * self.contracts * long_leg.direction * -1 # Premium paid for long leg is negative cash flow
+        short_cash_flow = short_leg.price * self.contracts * short_leg.direction * -1 # Premium received from short leg is positive cash flow
+        return long_cash_flow + short_cash_flow
+
+class Strangle(OptionStrategy):
+    """A strangle strategy with 1 long (short) call leg and 1 long (short) put leg."""
+    def __init__(self, call_leg: OptionLeg, put_leg: OptionLeg, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
+        super().__init__(strategy_id="Strangle", name="Strangle")
+        self.add_leg(call_leg)
+        self.add_leg(put_leg)
+        self.weight = weight
+        self.underlying_spot = underlying_spot
+        if self.weight is not None:
+            target_notional = self.weight * base_cash  # Default base_cash
+            self.contracts = target_notional / (self.underlying_spot * call_leg.multiplier)
+            self.contracts = int(self.contracts)
+
+    def notional_value(self):
+        """Notional value: spot * multiplier * contracts."""
+        call_leg = next((l for l in self.legs if l.option_type == "c"), None)
+        put_leg = next((l for l in self.legs if l.option_type == "p"), None)
+        return self.underlying_spot * call_leg.multiplier * self.contracts
+
+    def collateral_required(self):
+        """Collateral for strangles: max of two strikes * multiplier * contracts."""
+        collateral = 0
+        call_leg = next((l for l in self.legs if l.option_type == "c"), None)
+        put_leg = next((l for l in self.legs if l.option_type == "p"), None)
+        collateral = max(call_leg.strike if call_leg else 0, put_leg.strike if put_leg else 0) * call_leg.multiplier * self.contracts
+        return collateral
+
+    def cash_flow(self):
+        """Calculate total cash flow for the strangle strategy. Pay premiums for long legs, receive premiums for short legs."""
+        call_leg = next((l for l in self.legs if l.option_type == "c"), None)
+        put_leg = next((l for l in self.legs if l.option_type == "p"), None)
+        call_cash_flow = call_leg.price * self.contracts * call_leg.direction * -1 if call_leg else 0
+        put_cash_flow = put_leg.price * self.contracts * put_leg.direction * -1 if put_leg else 0
+        return call_cash_flow + put_cash_flow
+    
+class Synthetic(OptionStrategy):
+    """A synthetic equity position using two option legs (1 long, 1 short & 1 call, 1 put)."""
+    def __init__(self, long_leg: OptionLeg, short_leg: OptionLeg, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
+        super().__init__(strategy_id="Synthetic", name="Synthetic")
+        self.add_leg(long_leg)
+        self.add_leg(short_leg)
+        self.weight = weight
+        self.underlying_spot = underlying_spot
+        if self.weight is not None:
+            target_notional = self.weight * base_cash
+            self.contracts = target_notional / (self.underlying_spot * long_leg.multiplier)
+            self.contracts = int(self.contracts)
+
+    def notional_value(self):
+        """Notional value: spot * multiplier * contracts."""
+        return self.underlying_spot * self.legs[0].multiplier * self.contracts
+
+    def collateral_required(self):
+        """Collateral for synthetic: strike * multiplier * contracts for the short leg."""
+        short_leg = next((l for l in self.legs if l.direction == -1), None)
+        if short_leg:
+            return short_leg.strike * short_leg.multiplier * self.contracts
+        return 0
+    
+    def cash_flow(self):
+        """Calculate total cash flow for the synthetic strategy. Pay premium for long leg, receive premium for short leg."""
+        long_leg = next((l for l in self.legs if l.direction == 1), None)
+        short_leg = next((l for l in self.legs if l.direction == -1), None)
+        long_cash_flow = long_leg.price * self.contracts * long_leg.direction * -1 if long_leg else 0
+        short_cash_flow = short_leg.price * self.contracts * short_leg.direction * -1 if short_leg else 0
+        return long_cash_flow + short_cash_flow
+
+class IronCondor(OptionStrategy):
+    """An iron condor strategy with 4 option legs: call spread + put spread. All with different strikes but same expiry."""
+    def __init__(self, long_call: OptionLeg, short_call: OptionLeg, short_put: OptionLeg, long_put: OptionLeg, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
+        super().__init__(strategy_id="IC", name="Iron Condor")
+        self.add_leg(long_call)
+        self.add_leg(short_call)
+        self.add_leg(short_put)
+        self.add_leg(long_put)
+        self.weight = weight
+        self.underlying_spot = underlying_spot
+        if self.weight is not None:
+            target_notional = self.weight * base_cash  # Default base_cash
+            self.contracts = target_notional / (self.underlying_spot * short_call.multiplier)
+            self.contracts = int(self.contracts)
+        
+    def notional_value(self):
+        """Notional value: spot * multiplier * contracts."""
+        return self.underlying_spot * self.legs[0].multiplier * self.contracts
+
+    def collateral_required(self):
+        """Collateral for iron condor: max width of two spreads * multiplier * contracts."""
+        calls = [l for l in self.legs if l.option_type == "c"]
+        puts = [l for l in self.legs if l.option_type == "p"]
+        call_width = abs(calls[0].strike - calls[1].strike) if len(calls) == 2 else 0
+        put_width = abs(puts[0].strike - puts[1].strike) if len(puts) == 2 else 0
+        return max(call_width, put_width) * self.legs[0].multiplier * self.contracts
+    
+    def cash_flow(self):
+        """Calculate total cash flow for the iron condor strategy. Pay premiums for long legs, receive premiums for short legs."""
+        call_legs = [l for l in self.legs if l.option_type == "c"]
+        put_legs = [l for l in self.legs if l.option_type == "p"]
+        call_cash_flow = sum(leg.price * self.contracts * leg.direction * -1 for leg in call_legs)
+        put_cash_flow = sum(leg.price * self.contracts * leg.direction * -1 for leg in put_legs)
+        return call_cash_flow + put_cash_flow
+
+#------------------------------END OF STRATEGY BUILDING BLOCK CLASSES---------------------------------------------------------------------------------    
 
 class Portfolio():
     """ 
-    Every backtest is initiated by a starting portfolio. 
-    The portfolio class is for taking in option leg configurations and optimized allocation.
+    Every backtest needs to have a starting initiated portfolio determined by the configuration file and inputs. 
+    The portfolio class:
+        1. reads configurations,
+        2. identifies option universe, selects options based on user input parameters (DTM, moneyness),
+        3. matches strategies to building blocks (e.g., long call, short put secured by bond, etc.),
+        4. determines net collateral of all strategies and,
+        5. allocates capital to each leg accordingly.
+    The output is shown to the user to be reviewed and confirmed before the backtest is run.
     """
-    def __init__(self, config_path:str, underlying_ticker:str, country_code:str, start_dt:dt.date, end_dt:dt.date, base_cash:int=1000000):
-        
+    def __init__(self, config_path:str, ticker:str, country_code:str, start_dt:dt.date, end_dt:dt.date, base_cash:int=1000000): 
         """ Inputs:
             1) Underlying Ticker + Country Code
-            2) Configuration of Options file path
+            2) Configuration dataframe file path
             3) Start Date and End Date
         """
         # Global Variables and Inputs
         self.cash = base_cash
+        self.strategies = []
         self.start_dt = dt.date(2025,1,1)
         self.end_dt = dt.date(2025,4,30)
-        self.ticker = "XIU"
-        self.country_code = "CN"
-        self.option_legs = []
-        
+        self.ticker = ticker.upper()
+        self.country_code = country_code.upper()
+
         # Inputs preprocessing: Dates
         self.holidays = None
         if self.country_code == "US":
@@ -210,21 +551,55 @@ class Portfolio():
                 self.start_dt = common.workday(self.start_dt, 1, holidays)
             while end_dt in self.holidays:
                 self.end_dt = common.workday(self.end_dt, -1, holidays)
-                
+        holidays_dict = dict(enumerate(self.holidays.flatten(), 1))
+
         # Inputs preprocessing: Ticker + Prices Time Series
         self.equity_ticker = self.ticker+" "+self.country_code+" Equity"
-        self.ul_prices = closing_prices(self.ticker, self.country_code, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")).set_index('Date')
+        self.ul_prices = closing_prices(self.ticker, self.country_code, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
         
-        # Inputs preprocessing: Option Legs Dataframe -> dictionary with selected options
+        # Inputs preprocessing: Option OptionLegs Dataframe -> dictionary with selected options
         config = pd.read_csv(config_path)
-        cols_lst = ['SEC_ID', 'TYPE', 'POS', 'DTM', 'MONEYNESS', 'RATIO', 'PRICE', 'STRIKE', 'EXPIRY', 'SECURED']
+        cols_lst = ['STRATEGY_ID',	'SUB_STRATEGY',	'ASSET',	'DIRECTION',	'WEIGHT',	'OPTION TYPE',	'DTM',	'MONEYNESS']
         config = config.reindex(columns=config.columns.tolist() + [c for c in cols_lst if c not in config.columns], fill_value=None)
         
         if config.empty:
-            print("Warning: Configuration dataframe is empty.") 
-        config_dict = config.to_dict(orient = "records")
-        
-        # Find nearest next Friday for legging into options
+            print("Warning: Configuration dataframe is empty.")
+
+        #---------------------------------------ERROR CHECKING: VALIDATE CONFIG FILE--------------------------------------------------
+
+        required_cols = ['STRATEGY_ID', 'SUB_STRATEGY', 'ASSET', 'DIRECTION']
+        for col in required_cols:
+            if col not in config.columns:
+                raise ValueError(f"Configuration dataframe is missing required column: {col}")
+        if not all(config['ASSET'].str.lower().isin(['option', 'equity', 'bond'])):
+            raise ValueError("Configuration dataframe has invalid ASSET values; expected 'option', 'equity', or 'bond'.")
+        if not all(config['DIRECTION'].isin([1, -1])):
+            raise ValueError("Configuration dataframe has invalid DIRECTION values; expected 1, -1")
+        if 'OPTION TYPE' in config.columns and not all(config['OPTION TYPE'].str.lower().isin(['c', 'p', None])):
+            raise ValueError("Configuration dataframe has invalid OPTION TYPE values; expected 'c', 'p', or None.")
+        if 'DTM' in config.columns and not all(config['DTM'].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))):
+            raise ValueError("Configuration dataframe has invalid DTM values; expected numeric or NaN.")
+        if 'MONEYNESS' in config.columns and not all(config['MONEYNESS'].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))):
+            raise ValueError("Configuration dataframe has invalid MONEYNESS values; expected numeric or NaN.")
+        if 'DTM' in config.columns and not all(config['DTM'].isin([5, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360, 450, 540, 630, 720, 810, 900, 990, 1080, 1170, 1260]) | config['DTM'].isna()):
+            raise ValueError("Configuration dataframe has invalid DTM values; expected 5, 30, 60, 90, 120... etc. Monthly values (multiple of 30) within a year and quarterly values (multiple of 90) up to 3 years, or NaN.")
+        for sub_id, sub_df in config.groupby('SUB_STRATEGY'):
+            # check that weight are all the same within the sub strategy
+            if 'WEIGHT' in sub_df.columns and not sub_df['WEIGHT'].isna().all() and len(sub_df['WEIGHT'].dropna().unique()) > 1:
+                raise ValueError(f"Sub-strategy {sub_id} has inconsistent weight values.")
+            # check that option legs have option type, DTM, and moneyness specified
+            option_legs = sub_df[sub_df['ASSET'].str.lower() == 'option']
+            if not option_legs.empty:
+                if option_legs['OPTION TYPE'].isna().any():
+                    raise ValueError(f"Sub-strategy {sub_id} has option legs with missing OPTION TYPE.")
+                if option_legs['DTM'].isna().any():
+                    raise ValueError(f"Sub-strategy {sub_id} has option legs with missing DTM.")
+                if option_legs['MONEYNESS'].isna().any():
+                    raise ValueError(f"Sub-strategy {sub_id} has option legs with missing MONEYNESS.")
+        #---------------------------------------ERROR CHECKING: VALIDATE CONFIG FILE--------------------------------------------------
+
+
+        # Find nearest next Friday for legging into options: First Roll Date
         if self.start_dt.weekday() == 4: #Friday
             nearest_fri = common.workday(self.start_dt, 5)
         else:
@@ -232,341 +607,187 @@ class Portfolio():
             nearest_fri = common.workday(self.start_dt, days_til_fri)
         while nearest_fri in self.holidays:
             nearest_fri = common.workday(nearest_fri, -1)
-        
-        # Configure dictionary after selecting options
-        for option in config_dict:
-            option_leg = Leg(instrument=str(option.get('SEC_ID')),
-                         option_type=str(option.get('TYPE')),
-                         pos=str(option.get('POS')),
-                         dtm=int(option.get('DTM')),
-                         moneyness=float(option.get('MONEYNESS')),
-                         ratio=int(option.get('RATIO')),
-                         price=float(option.get('PRICE')),
-                         strike=float(option.get('STRIKE')),
-                         expiry=pd.to_datetime(option.get('EXPIRY')).date,
-                         secured=bool(option.get('SECURED')))
-            expiry_date = common.workday(nearest_fri, option_leg.dtm)
-            while expiry_date in self.holidays:
-                expiry_date = common.workday(expiry_date, -1)
-            option_leg.select_option(self.ticker, nearest_fri, expiry_date)
-            option = option_leg.to_dict()
-            self.option_legs.append(option)
-
-# Allocation classes
-class ScaleParams:
-    """
-    Scaling configuration.
-    - base_cash: total cash available to initialize
-    - spot: underlying spot of stock
-    - cash_buffer: unallocated cash
-    """
-    def __init__(self,
-                 base_cash: float,
-                 spot: float,
-                 cash_buffer: float = 0.0):
-        self.base_cash = float(base_cash)
-        self.spot = float(spot)
-        self.cash_buffer = float(cash_buffer)
-
-class ScaleResult:
-    def __init__(self,
-                 status: str,
-                 units: int,
-                 ending_cash: float,
-                 per_unit: dict[str, any],
-                 totals: dict[str, any],
-                 final_legs: list[dict[str, any]],
-                 diagnostics: dict[str, any]):
-        self.status = status
-        self.units = int(units)
-        self.ending_cash = float(ending_cash)
-        self.per_unit = per_unit
-        self.totals = totals
-        self.final_legs = final_legs
-        self.diagnostics = diagnostics
-        
-    
-    def to_dict(self):
-            return {
-                "status": self.status,
-                "units": self.units,
-                "ending_cash": self.ending_cash,
-                "per_unit": serialize(self.per_unit),
-                "totals": serialize(self.totals),
-                "final_legs": serialize(self.final_legs),
-                "diagnostics": serialize(self.diagnostics),
-            }
-
-def serialize(obj):
-    """
-    Recursively convert custom objects (Leg, Equity, etc.) into dicts
-    so they can be JSON-serialized.
-    """
-    if isinstance(obj, Leg):
-        return obj.to_dict()
-    if isinstance(obj, Equity):
-        return obj.__dict__
-    if isinstance(obj, dict):
-        return {k: serialize(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [serialize(x) for x in obj]
-    if isinstance(obj, tuple):
-        return [serialize(x) for x in obj]  # JSON has no tuple
-    return obj
-
-
-def normalize_datatype(raw_legs: list[dict[str, any]]) -> list[Leg]:
-    """ Converts raw option leg data into correct datatypes """
-    output: list[Leg] = []
-    for d in raw_legs:
-        lt = Leg(
-            instrument=d["instrument"],
-            option_type=d.get("option_type", d.get("type")) if d.get("option_type", d.get("type")) else None,
-            pos=d["pos"],
-            dtm=d.get("dtm"),
-            moneyness=d.get("moneyness", 0.0),
-            ratio=d.get("ratio", 1),
-            price=d.get("price", 0.0),
-            strike=d.get("strike"),
-            expiry=d.get("expiry"),
-            multiplier=d.get("multiplier", 100),
-            secured=d.get("secured")
-        )
-        output.append(lt)
-    return output
-
-
-def vertical_dependencies(legs: list[Leg]):
-    """
-    Parses through the set of option legs initialized and determine dependencies based on expiry date matches
-    """
-    # Expand temporary list of copied legs with new "qty" from ratio for internal math
-    tmp = []
-    for l in legs:
-        t = copy.deepcopy(l)
-        t.qty = l.ratio
-        tmp.append(t)
-    # uses helper to segment by expiry date and option type into buckets
-    buckets = group_options(tmp)
-    # Matching Calls, Matching Puts, Remaning Calls, Remaining Puts
-    m_call, m_put = defaultdict(list), defaultdict(list)
-    rem_sc, rem_sp = defaultdict(list), defaultdict(list)
-    
-    # sort all different option positions by moneyness
-    # Loop for same expiration date
-    for exp, group in buckets.items():
-        scalls = sorted(group["short_calls"], key=lambda x: x.strike)
-        lcalls = sorted(group["long_calls"], key=lambda x: x.strike)
-        sputs  = sorted(group["short_puts"],  key=lambda x: -x.strike)
-        lputs  = sorted(group["long_puts"],   key=lambda x: -x.strike)
-        
-        # long calls: tally up the different long call positions
-        avail_lc = defaultdict(int)
-        for lc in lcalls:
-            avail_lc[lc.strike] += lc.qty
-            
-        # long puts: tally up the different long put positions
-        avail_lp = defaultdict(int)
-        for lp in lputs:
-            avail_lp[lp.strike] += lp.qty
-            
-        # Identify Vertical Call Spread
-        # Short calls covered by long calls with strike >= short strike
-        # parse through long calls to find matching long calls with a higher strike
-        for sc in scalls:
-            remain = sc.qty
-            for k in sorted([k for k in avail_lc if k >= sc.strike]):
-                if remain <= 0:
-                    break
-                take = min(remain, avail_lc[k])
-                if take <= 0:
-                    continue
-                avail_lc[k] -= take
-                remain -= take
-                sc_leg = copy.deepcopy(sc); sc_leg.qty = take
-                lc_leg = copy.deepcopy([lc for lc in lcalls if lc.strike == k][0]); lc_leg.qty = take
-                m_call[exp].append((sc_leg, lc_leg, take))
-            if remain > 0:
-                leftover = copy.deepcopy(sc); leftover.qty = remain
-                rem_sc[exp].append(leftover)
-        
-        # Identify Vertical Put Spread
-        # Short puts covered by long puts with strike <= short strike
-        for sp in sputs:
-            remain = sp.qty
-            for k in sorted([k for k in avail_lp if k <= sp.strike], reverse=True):
-                if remain <= 0:
-                    break
-                take = min(remain, avail_lp[k])
-                if take <= 0:
-                    continue
-                avail_lp[k] -= take
-                remain -= take
-                sp_leg = copy.deepcopy(sp); sp_leg.qty = take
-                lp_leg = copy.deepcopy([lp for lp in lputs if lp.strike == k][0]); lp_leg.qty = take
-                m_put[exp].append((sp_leg, lp_leg, take))
-            if remain > 0:
-                leftover = copy.deepcopy(sp); leftover.qty = remain
-                rem_sp[exp].append(leftover)
-    # return bucketed option groups
-    return m_call, m_put, rem_sc, rem_sp
-
-def scale_and_allocate_cash(
-    raw_legs: list[dict[str, any]],
-    params: ScaleParams,
-    underlying_ticker: str,
-    country_code: str) -> ScaleResult:
-    """
-    Based on initial cash amount and option leg dependencies, determine how to allocate cash into shares 
-    and scale option quantities by ratio optimally without running out of cash flow.
-    - Do NOT auto-buy shares to cover uncovered short calls.
-    - For any remaining uncovered shorts (calls or puts) after vertical matching:
-        * Reserve cash = strike × multiplier × contracts (per unit).
-    - Stock legs in the config are honored (ratio shares per unit).
-    """
-    """
-    Determine portfolio scale and capital allocation.
-    - Uses ratio-based scaling
-    - Always holds 100 shares of underlying equity per unit
-    - Does NOT auto-buy shares for options coverage
-    - All uncovered short options (calls AND puts) are strike-secured
-    """
-
-    # Normalize option legs
-    option_legs = normalize_datatype(raw_legs)
-
-    # Per-unit option premium
-    net_premium_unit = 0.0
-    for l in option_legs:
-        sign = +1 if l.pos == "short" else -1
-        net_premium_unit += sign * l.price * l.ratio * l.multiplier
-
-    # Equity per unit (fixed assumption)
-    shares_per_unit = 100
-    cash_for_equity_unit = shares_per_unit * params.spot
-
-
-    # Vertical matching
-    m_call, m_put, rem_sc, rem_sp = vertical_dependencies(option_legs)
-
-    # Strike-secured reserves (per unit)
-    cash_reserved_calls_unit = 0.0
-    cash_reserved_puts_unit = 0.0
-
-    call_reserve_details = []
-    put_reserve_details = []
-
-    # Uncovered short calls
-    for exp, lst in rem_sc.items():
-        for sc in lst:
-            reserve = sc.strike * sc.multiplier * sc.qty
-            cash_reserved_calls_unit += reserve
-            call_reserve_details.append({
-                "expiry": exp,
-                "strike": sc.strike,
-                "qty": sc.qty,
-                "reserve": reserve
-            })
-
-    # Uncovered short puts
-    for exp, lst in rem_sp.items():
-        for sp in lst:
-            reserve = sp.strike * sp.multiplier * sp.qty
-            cash_reserved_puts_unit += reserve
-            put_reserve_details.append({
-                "expiry": exp,
-                "strike": sp.strike,
-                "qty": sp.qty,
-                "reserve": reserve
-            })
-
-    # Per-unit capital requirement
-    required_cash_unit = (
-        cash_for_equity_unit
-        + cash_reserved_calls_unit
-        + cash_reserved_puts_unit
-        - net_premium_unit
-    )
-
-    # Scaling by ratio
-    available_cash = params.base_cash - params.cash_buffer
-
-    if required_cash_unit <= 0:
-        # Net credit trade → require explicit cap
-        status = "needs_cap"
-        units = 0
-    else:
-        units = int(max(0, available_cash // required_cash_unit))
-        status = "ok" if units > 0 else "zero_units"
-
-    ending_cash = params.base_cash - (units * required_cash_unit) - params.cash_buffer
-
-    # Final Scaled option legs
-    final_legs = []
-
-    for l in option_legs:
-        final_legs.append({
-            "instrument": "option",
-            "option_type": l.option_type,
-            "pos": l.pos,
-            "strike": l.strike,
-            "expiry": l.expiry,
-            "multiplier": l.multiplier,
-            "price": l.price,
-            "qty": l.ratio * units,
-            "secured": l.secured,
-        })
-
-    # Scaled equity
-    final_legs.append({
-        "instrument": "equity",
-        "pos": "long",
-        "ticker": underlying_ticker,
-        "country": country_code,
-        "qty": shares_per_unit * units,
-        "price": params.spot,
-    })
-
-    # ----------------------------
-    # Diagnostics
-    # ----------------------------
-    per_unit = {
-        "net_premium_unit": round(net_premium_unit, 2),
-        "equity_cash_unit": round(cash_for_equity_unit, 2),
-        "reserved_calls_unit": round(cash_reserved_calls_unit, 2),
-        "reserved_puts_unit": round(cash_reserved_puts_unit, 2),
-        "required_cash_unit": round(required_cash_unit, 2),
-        "uncovered_calls": call_reserve_details,
-        "uncovered_puts": put_reserve_details,
-    }
-
-    totals = {
-        "units": units,
-        "equity_cash_total": round(cash_for_equity_unit * units, 2),
-        "reserved_calls_total": round(cash_reserved_calls_unit * units, 2),
-        "reserved_puts_total": round(cash_reserved_puts_unit * units, 2),
-        "net_premium_total": round(net_premium_unit * units, 2),
-        "ending_cash": round(ending_cash, 2),
-    }
-
-    diagnostics = {
-        "matched_call_spreads": m_call,
-        "matched_put_spreads": m_put,
-        "cash_buffer": params.cash_buffer,
-    }
-
-    return ScaleResult(
-        status=status,
-        units=units,
-        ending_cash=ending_cash,
-        per_unit=per_unit,
-        totals=totals,
-        final_legs=final_legs,
-        diagnostics=diagnostics,
-    )
-            
+        underlying_price_on_roll = self.ul_prices[self.ul_prices['Date'] == nearest_fri]['Close'].iloc[0]
                 
+        # Identify unique sub-strategies loop an`d select options for each leg based on user input parameters (DTM, moneyness)
+        sub_strat_iter = config['SUB_STRATEGY'].unique() # How many sub-strategies are in the config? Iterate through each one, select options, and build strategy objects accordingly
+        # for sub strategies 1, 2, ... in config:
+        for sub in sub_strat_iter:
+            sub_df = config[config['SUB_STRATEGY'] == sub] # filter table for the sub strategy
+            sub_id = sub_df['STRATEGY_ID'].iloc[0] # find id
+            weight = sub_df['WEIGHT'].iloc[0] if 'WEIGHT' in sub_df.columns else None # find weight for the sub strategy if specified, otherwise None
+            # collect and initiate leg objects for all in the sub strategy
+            legs = []
+            for _, row in sub_df.iterrows():
+                if row['ASSET'].lower() == "option":
+                    leg = OptionLeg(
+                        asset=row['ASSET'],
+                        option_type=row['OPTION TYPE'],
+                        direction=row['DIRECTION'],
+                        dtm=row['DTM'],
+                        moneyness=row['MONEYNESS']
+                    )
+                    # select expiration and strike based on DTM, moneyness, and nearest next Friday, and update leg attributes accordingly
+                    # this needs to be done before strategy matching because the selected option (strike and expiry) will impact the strategy type (e.g., single leg vs spread) and collateral requirement
+                    leg.select_option(self.ticker, nearest_fri, holidays_dict)
+                    legs.append(leg)
+                elif row['ASSET'].lower() == "equity":
+                    leg = Equity(
+                        asset=row['ASSET'],
+                        direction=row['DIRECTION'],
+                        weight=row['WEIGHT'],
+                        ticker=self.ticker,
+                        country=self.country_code,
+                        start_dt=self.start_dt,
+                        end_dt=self.end_dt
+                    )
+                    legs.append(leg)
+                elif row['ASSET'].lower() == "bond":
+                    leg = Residual(
+                        asset=row['ASSET'],
+                        cash=row['WEIGHT']*self.cash if row['WEIGHT'] is not None else None,
+                        ticker="Money Market",
+                        country=self.country_code,
+                        start_dt=self.start_dt,
+                        end_dt=self.end_dt
+                    )
+                    legs.append(leg)
+
+            # STRATEGY MATCHING: initiate classes for each identified strategy and calculate notional value and collateral requirement for each strategy
+            if sub_id == "Single":
+                # Single option: expect 1 option leg
+                leg = legs[0]
+                strategy = Single(leg, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
+                self.strategies.append(strategy)
+            
+            elif sub_id == "Equity":
+                # Pure equity leg: expect 1 equity leg
+                leg = legs[0]
+                strategy = EquityStrategy(leg, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
+                self.strategies.append(strategy)
+            
+            # Removing Residual leg because it won't be input as a strategy by the user; instead default last leg for remaining cash unallocated to other strategies after collateral is secured, and put it into money market as a bond strategy.
+            #elif sub_id == "Residual":
+                # Residual cash leg: expect 1 bond leg
+                #leg = legs[0]
+                #strategy = BondStrategy(leg)
+                #self.strategies.append(strategy)
+                
+            elif sub_id == "CC":
+                # Covered Call: expect 1 equity leg + 1 short call leg
+                equity_leg = next(l for l in legs if isinstance(l, Equity))
+                call_leg = next(l for l in legs if isinstance(l, OptionLeg) and l.option_type == "c")
+                strategy = CoveredCall(equity_leg, call_leg, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
+                self.strategies.append(strategy)
+
+            elif sub_id == "Spread":
+                # Spread: expect 2 option legs (long and short) of the same option type
+                long_leg = next(l for l in legs if l.direction == 1)
+                short_leg = next(l for l in legs if l.direction == -1)
+                strategy = Spread(long_leg, short_leg, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
+                self.strategies.append(strategy)
+
+            elif sub_id == "Strangle":
+                # Strangle: expect 2 option legs (1 call, 1 put)
+                call_leg = next(l for l in legs if l.option_type == "c")
+                put_leg = next(l for l in legs if l.option_type == "p")
+                strategy = Strangle(call_leg, put_leg, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
+                self.strategies.append(strategy)
+
+            elif sub_id == "Synthetic":
+                # Synthetic: expect 2 options legs (1 long, 1 short)
+                long_leg = next(l for l in legs if l.direction == 1)
+                short_leg = next(l for l in legs if l.direction == -1)
+                strategy = Synthetic(long_leg, short_leg, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
+                self.strategies.append(strategy)
+
+            elif sub_id == "IC":
+                # Iron Condor: expect 4 option legs (a put spread and a call spread), identify by different strikes but same expiry
+                long_call = next(l for l in legs if l.option_type == "c" and l.direction == 1)
+                short_call = next(l for l in legs if l.option_type == "c" and l.direction == -1)
+                short_put = next(l for l in legs if l.option_type == "p" and l.direction == -1)
+                long_put = next(l for l in legs if l.option_type == "p" and l.direction == 1)
+                strategy = IronCondor(long_call, short_call, short_put, long_put, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
+                self.strategies.append(strategy)
+
+        # Calculate Total Allocation Cash flow (Paid/Earned Premiums and long shares paid)
+        self.net_cash_spend = sum(strategy.cash_flow() for strategy in self.strategies)
+        # Also Secure collateral cash for every strategy: amount is held and sits in money market
+        self.bond_cash = sum(strategy.collateral_required() for strategy in self.strategies if strategy.collateral_required() > 0)
+
+        # Scale down allocations proportionally if overallocation (total cash allocated exceeds available cash)
+        self.residual_cash = self.cash + self.net_cash_spend - self.bond_cash
+        self.scale_if_overallocated()
+
+        # Add collateral as a separate cash position
+        if self.bond_cash > 0:
+            collateral_leg = Residual(asset="bond", cash=self.bond_cash, ticker="Collateral", country=self.country_code, start_dt=self.start_dt, end_dt=self.end_dt)
+            collateral_strategy = BondStrategy(collateral_leg)
+            self.strategies.append(collateral_strategy)
+
+        # Residual cash leg: remaining cash in money market if there is leftover after allocating to other legs.
+        leftover = self.cash + self.net_cash_spend - self.bond_cash
+        if leftover > 0:
+            residual_cash = leftover
+            residual_leg = Residual(asset="bond", cash=residual_cash, ticker="Money Market", country=self.country_code, start_dt=self.start_dt, end_dt=self.end_dt)
+            residual_strategy = BondStrategy(residual_leg)
+            self.strategies.append(residual_strategy)
+            
+    def scale_if_overallocated(self):
+        """ If total cash allocated exceeds available cash, scale down contracts/shares proportionally. """
+        if self.residual_cash < 0:
+            total_allocated = -1*self.net_cash_spend + self.bond_cash
+            print(f"Overallocation detected: Total Allocated (${total_allocated:.2f}) exceeds Available Cash (${self.cash:.2f}). Scaling down allocations proportionally.")
+            scale_factor = self.cash / total_allocated
+            for strategy in self.strategies:
+                if isinstance(strategy, Single):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, EquityStrategy):
+                    strategy.shares = int(strategy.shares * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, CoveredCall):
+                    strategy.shares = int(strategy.shares * scale_factor)
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, Spread):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, Strangle):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, Synthetic):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, IronCondor):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+            # Recalculate net cash spend, bond cash, and residual cash after scaling
+            self.net_cash_spend = sum(strategy.cash_flow() for strategy in self.strategies)
+            self.bond_cash = sum(strategy.collateral_required() for strategy in self.strategies if strategy.collateral_required() > 0)
+            leftover = self.cash + self.net_cash_spend - self.bond_cash
+            self.residual_cash = leftover
+            print(f"Scaling complete. New Total Allocated: ${-1*self.net_cash_spend + self.bond_cash:.2f}, New Residual Cash: ${self.residual_cash:.2f}")
+
+    def __str__(self):
+        strategy_descriptions = [str(strategy) for strategy in self.strategies]
+        return f"Portfolio Composition:\n" + "\n".join(strategy_descriptions) + f"\n\nNet Cash Flow on Allocation: ${-1*self.net_cash_spend:.2f}\n" + f"Total Collateral Held: ${self.bond_cash:.2f}\n" + f"Residual Cash in Money Market: ${self.residual_cash:.2f}"
     
+
 if __name__ == "__main__":
     
     """ Inputs:
@@ -576,21 +797,27 @@ if __name__ == "__main__":
     """
     # Global Variables
     base_cash = 1000000
-    # Inputs
+
+    # User Inputs
     start_dt = dt.date(2025,1,1)
     end_dt = dt.date(2025,4,30)
-    underlying_ticker = "XIU"
+    ticker = "XIU"
     country_code = "CN"
-    config_path = r"C:\Users\sxiao\backtester\portfolio_config\option_legs.csv"
+    config_path = r"C:\Users\sxiao\backtester\portfolio_config\config.csv"
+
+    # Initialize Portfolio
+    portfolio = Portfolio(config_path, ticker, country_code, start_dt, end_dt, base_cash)
+
+    # Output portfolio composition for user review
+    print(f"\nStarting Cash Balance: ${base_cash}\n")
+    print(portfolio)
+
+    # total allocation check
+    print(f"\nTotal Cash Allocated (Cash Flow + Collateral + Residual): ${-1*portfolio.net_cash_spend + portfolio.bond_cash + portfolio.residual_cash:.2f}")
     
-    port = Portfolio(config_path, underlying_ticker, country_code, start_dt, end_dt, base_cash)
-    spot = port.ul_prices.loc[port.start_dt.strftime("%Y-%m-%d"), port.ticker]
-    
-    params = ScaleParams(
-        base_cash=base_cash,
-        spot=spot,
-        cash_buffer=base_cash*0.01
-    )
-    result = scale_and_allocate_cash(port.option_legs, params, port.ticker, port.country_code)
-    
-    print(json.dumps(result.to_dict(), indent=2, default=str))
+    # Popup Screen: Ask user to confirm the portfolio in order to proceed with the backtest
+    proceed = input("\nIs this portfolio correct? (y/n):")
+    if proceed.lower() != 'y':
+        print("Please review and update the configuration file, then re-run the script.")
+    else:
+        print("Portfolio confirmed. Proceeding with backtest...")
