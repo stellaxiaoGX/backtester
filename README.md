@@ -7,6 +7,9 @@ The main objective is to let the user be able to define the time period, underly
 2. Portfolio file: csv file path for option legs.
 3. Underlying Asset Ticker + Country Code
 
+<img width="399" height="331" alt="image" src="https://github.com/user-attachments/assets/4a784488-ac97-4b04-b044-66e5feda5045" />
+
+
 ### Option Blocks Overview: How to Set up Configuration csv file
 There are a list of building blocks defined to set up a portfolio. You must use these identifiers to make up the portfolio and get your desired position legs.
 
