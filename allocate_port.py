@@ -212,7 +212,7 @@ def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
         return closing_prices
     
     except Exception as e:
-        print(f"Error fetching data: {e}")
+        print(f"Error fetching data for {ticker}: {e}")
         #return pd.DataFrame()
         manual_prices = pd.read_csv(os.path.join(cur_dir, "xiu.csv"))
         manual_prices['Date'] = pd.to_datetime(manual_prices['Date']).dt.date
@@ -307,10 +307,9 @@ class EquityStrategy(OptionStrategy):
         return self.shares * self.underlying_spot * equity_leg.direction * -1 # Buying shares is negative cash flow, selling shares is positive cash flow
 
 class BondStrategy(OptionStrategy):
-    """A residual cash/bond position strategy. Expects one bond leg. Expects amount of cash input, should be determined by weight prior to this class."""
-    """Second use case of Residual is leftover cash at the end of allocation, in which case leftover cash is also input."""
+    """Residual is leftover cash at the end of allocation, in which case everything is put into money market."""
     def __init__(self, residual_leg: Residual):
-        name = "Collateral" if "Collateral" in residual_leg.ticker else "Residual Cash"
+        name = "Collateral" if residual_leg.ticker is None else f"{residual_leg.ticker} Cash"
         super().__init__(strategy_id="Residual", name=name)
         self.add_leg(residual_leg)
 
@@ -555,6 +554,7 @@ class Portfolio():
             print("Warning: Configuration dataframe is empty.")
 
         #---------------------------------------ERROR CHECKING: VALIDATE CONFIG FILE--------------------------------------------------
+
         required_cols = ['STRATEGY_ID', 'SUB_STRATEGY', 'ASSET', 'DIRECTION']
         for col in required_cols:
             if col not in config.columns:
@@ -575,6 +575,15 @@ class Portfolio():
             # check that weight are all the same within the sub strategy
             if 'WEIGHT' in sub_df.columns and not sub_df['WEIGHT'].isna().all() and len(sub_df['WEIGHT'].dropna().unique()) > 1:
                 raise ValueError(f"Sub-strategy {sub_id} has inconsistent weight values.")
+            # check that option legs have option type, DTM, and moneyness specified
+            option_legs = sub_df[sub_df['ASSET'].str.lower() == 'option']
+            if not option_legs.empty:
+                if option_legs['OPTION TYPE'].isna().any():
+                    raise ValueError(f"Sub-strategy {sub_id} has option legs with missing OPTION TYPE.")
+                if option_legs['DTM'].isna().any():
+                    raise ValueError(f"Sub-strategy {sub_id} has option legs with missing DTM.")
+                if option_legs['MONEYNESS'].isna().any():
+                    raise ValueError(f"Sub-strategy {sub_id} has option legs with missing MONEYNESS.")
         #---------------------------------------ERROR CHECKING: VALIDATE CONFIG FILE--------------------------------------------------
 
 
@@ -644,12 +653,13 @@ class Portfolio():
                 leg = legs[0]
                 strategy = EquityStrategy(leg, weight=weight, underlying_spot=underlying_price_on_roll, base_cash=self.cash)
                 self.strategies.append(strategy)
-
-            elif sub_id == "Residual":
+            
+            # Removing Residual leg because it won't be input as a strategy by the user; instead default last leg for remaining cash unallocated to other strategies after collateral is secured, and put it into money market as a bond strategy.
+            #elif sub_id == "Residual":
                 # Residual cash leg: expect 1 bond leg
-                leg = legs[0]
-                strategy = BondStrategy(leg)
-                self.strategies.append(strategy)
+                #leg = legs[0]
+                #strategy = BondStrategy(leg)
+                #self.strategies.append(strategy)
                 
             elif sub_id == "CC":
                 # Covered Call: expect 1 equity leg + 1 short call leg
@@ -693,6 +703,10 @@ class Portfolio():
         # Also Secure collateral cash for every strategy: amount is held and sits in money market
         self.bond_cash = sum(strategy.collateral_required() for strategy in self.strategies if strategy.collateral_required() > 0)
 
+        # Scale down allocations proportionally if overallocation (total cash allocated exceeds available cash)
+        self.residual_cash = self.cash + self.net_cash_spend - self.bond_cash
+        self.scale_if_overallocated()
+
         # Add collateral as a separate cash position
         if self.bond_cash > 0:
             collateral_leg = Residual(asset="bond", cash=self.bond_cash, ticker="Collateral", country=self.country_code, start_dt=self.start_dt, end_dt=self.end_dt)
@@ -706,7 +720,61 @@ class Portfolio():
             residual_leg = Residual(asset="bond", cash=residual_cash, ticker="Money Market", country=self.country_code, start_dt=self.start_dt, end_dt=self.end_dt)
             residual_strategy = BondStrategy(residual_leg)
             self.strategies.append(residual_strategy)
+            
+    def scale_if_overallocated(self):
+        """ If total cash allocated exceeds available cash, scale down contracts/shares proportionally. """
+        if self.residual_cash < 0:
+            total_allocated = -1*self.net_cash_spend + self.bond_cash
+            print(f"Overallocation detected: Total Allocated (${total_allocated:.2f}) exceeds Available Cash (${self.cash:.2f}). Scaling down allocations proportionally.")
+            scale_factor = self.cash / total_allocated
+            for strategy in self.strategies:
+                if isinstance(strategy, Single):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, EquityStrategy):
+                    strategy.shares = int(strategy.shares * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, CoveredCall):
+                    strategy.shares = int(strategy.shares * scale_factor)
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, Spread):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, Strangle):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, Synthetic):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+                elif isinstance(strategy, IronCondor):
+                    strategy.contracts = int(strategy.contracts * scale_factor)
+                    # Update weight proportionally
+                    if strategy.weight is not None:
+                        strategy.weight *= scale_factor
+            # Recalculate net cash spend, bond cash, and residual cash after scaling
+            self.net_cash_spend = sum(strategy.cash_flow() for strategy in self.strategies)
+            self.bond_cash = sum(strategy.collateral_required() for strategy in self.strategies if strategy.collateral_required() > 0)
+            leftover = self.cash + self.net_cash_spend - self.bond_cash
+            self.residual_cash = leftover
+            print(f"Scaling complete. New Total Allocated: ${-1*self.net_cash_spend + self.bond_cash:.2f}, New Residual Cash: ${self.residual_cash:.2f}")
 
+    def __str__(self):
+        strategy_descriptions = [str(strategy) for strategy in self.strategies]
+        return f"Portfolio Composition:\n" + "\n".join(strategy_descriptions) + f"\n\nNet Cash Flow on Allocation: ${-1*self.net_cash_spend:.2f}\n" + f"Total Collateral Held: ${self.bond_cash:.2f}\n" + f"Residual Cash in Money Market: ${self.residual_cash:.2f}"
+    
 
 if __name__ == "__main__":
     
@@ -730,7 +798,14 @@ if __name__ == "__main__":
 
     # Output portfolio composition for user review
     print(f"\nStarting Cash Balance: ${base_cash}\n")
-    for strategy in portfolio.strategies:
-        print(strategy)
-        
+    print(portfolio)
+
+    # total allocation check
+    print(f"\nTotal Cash Allocated (Cash Flow + Collateral + Residual): ${-1*portfolio.net_cash_spend + portfolio.bond_cash + portfolio.residual_cash:.2f}")
+    
+    # Popup Screen: Ask user to confirm the portfolio in order to proceed with the backtest
     proceed = input("\nIs this portfolio correct? (y/n):")
+    if proceed.lower() != 'y':
+        print("Please review and update the configuration file, then re-run the script.")
+    else:
+        print("Portfolio confirmed. Proceeding with backtest...")
