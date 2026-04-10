@@ -142,7 +142,7 @@ class OptionLeg:
         ul_row = option_univ.loc[option_univ['Symbol'] == ticker]
         ul_price = ul_row.loc[0, 'Last Price']
         option_univ = option_univ[option_univ['Expiry Date'] == exp_date.strftime("%Y-%m-%d")]
-        option_univ = option_univ[option_univ['Call/Put'] == 0] if self.option_type == 'call' else option_univ[option_univ['Call/Put'] == 1]
+        option_univ = option_univ[option_univ['Call/Put'] == 0] if self.option_type == 'c' else option_univ[option_univ['Call/Put'] == 1]
 
         target_strike = ul_price * self.moneyness
         closest_strike_index = (option_univ['Strike Price'] - target_strike).abs().idxmin()
@@ -153,7 +153,17 @@ class OptionLeg:
         ask = option_univ.loc[closest_strike_index, 'Ask Price']
 
         self.current = selected_option
-        self.price = bid if self.direction == 1 else ask
+        # Long positions pay the ask price; short positions receive the bid price.
+        price = None
+        if self.direction == 1:
+            price = ask if pd.notna(ask) and ask > 0 else bid
+        else:
+            price = bid if pd.notna(bid) and bid > 0 else ask
+
+        if (price is None or (isinstance(price, float) and pd.isna(price))) and pd.notna(bid) and pd.notna(ask):
+            price = (bid + ask) / 2
+
+        self.price = float(price) if price is not None and pd.notna(price) else 0.0
         self.strike = strike
         self.expiry = expiry
 
@@ -379,7 +389,7 @@ class Spread(OptionStrategy):
 
     def notional_value(self):
         """Notional value based on underlying spot price * multiplier * contracts."""
-        return self.underlying_spot * self.short_leg.multiplier * self.contracts
+        return self.underlying_spot * self.legs[0].multiplier * self.contracts
 
     def collateral_required(self):
         """Collateral for spread: max_loss = |short_strike - long_strike| * multiplier."""
@@ -410,8 +420,10 @@ class Strangle(OptionStrategy):
             self.contracts = int(self.contracts)
 
     def notional_value(self):
-        """Notional value: spot * multiplier * contracts."""         
-        return self.underlying_spot * self.call_leg.multiplier * self.contracts
+        """Notional value: spot * multiplier * contracts."""
+        call_leg = next((l for l in self.legs if l.option_type == "c"), None)
+        put_leg = next((l for l in self.legs if l.option_type == "p"), None)
+        return self.underlying_spot * call_leg.multiplier * self.contracts
 
     def collateral_required(self):
         """Collateral for strangles: max of two strikes * multiplier * contracts."""
@@ -432,7 +444,7 @@ class Strangle(OptionStrategy):
 class Synthetic(OptionStrategy):
     """A synthetic equity position using two option legs (1 long, 1 short & 1 call, 1 put)."""
     def __init__(self, long_leg: OptionLeg, short_leg: OptionLeg, weight: float = None, underlying_spot: float = None, base_cash: int = 1000000):
-        super().__init__(strategy_id="Synthetic", name="Synthetic", underlying=long_leg.underlying)
+        super().__init__(strategy_id="Synthetic", name="Synthetic")
         self.add_leg(long_leg)
         self.add_leg(short_leg)
         self.weight = weight
@@ -482,16 +494,16 @@ class IronCondor(OptionStrategy):
 
     def collateral_required(self):
         """Collateral for iron condor: max width of two spreads * multiplier * contracts."""
-        calls = [l for l in self.legs if l.option_type == "call"]
-        puts = [l for l in self.legs if l.option_type == "put"]
+        calls = [l for l in self.legs if l.option_type == "c"]
+        puts = [l for l in self.legs if l.option_type == "p"]
         call_width = abs(calls[0].strike - calls[1].strike) if len(calls) == 2 else 0
         put_width = abs(puts[0].strike - puts[1].strike) if len(puts) == 2 else 0
         return max(call_width, put_width) * self.legs[0].multiplier * self.contracts
     
     def cash_flow(self):
         """Calculate total cash flow for the iron condor strategy. Pay premiums for long legs, receive premiums for short legs."""
-        call_legs = [l for l in self.legs if l.option_type == "call"]
-        put_legs = [l for l in self.legs if l.option_type == "put"]
+        call_legs = [l for l in self.legs if l.option_type == "c"]
+        put_legs = [l for l in self.legs if l.option_type == "p"]
         call_cash_flow = sum(leg.price * self.contracts * leg.direction * -1 for leg in call_legs)
         put_cash_flow = sum(leg.price * self.contracts * leg.direction * -1 for leg in put_legs)
         return call_cash_flow + put_cash_flow

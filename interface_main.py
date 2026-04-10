@@ -12,6 +12,9 @@ if "\\im_dev\\" in cur_dir:
     import im_dev.std_lib.common as common
 else:
     import im_prod.std_lib.common as common
+
+import allocate_port
+import confirmation_popup
     
     
 # Backtest Popup after running on all inputs
@@ -133,15 +136,23 @@ class MainWindow(QtWidgets.QMainWindow):
         if country not in self.valid_country_codes:
             QMessageBox.warning(self, "Invalid Country Identifier", "Country Code not valid.")
             return
+                
+        # Create the portfolio
+        start_dt = self.start_date.toPyDate()
+        end_dt = self.end_date.toPyDate()
+        try:
+            portfolio = allocate_port.Portfolio(self.portfolio_path, ticker, country, start_dt, end_dt, base_cash=1000000)
+        except Exception as e:
+            QMessageBox.critical(self, "Portfolio Creation Error", f"Failed to create portfolio:\n{str(e)}")
+            return
         
-        # Check if ticker with country code exists
-        asset = ticker+" "+country+" Equity"
-        
-        # Check if ticker with country code data exists for time range input
-        
-        # Call Popup and Backtest Module
-        popup = BackTestResults(f"Here's a preview of the portfolio we compiled. Is this correct?", self)
-        popup.exec_()
+        # Show confirmation dialog
+        if confirmation_popup.ConfirmationDialog.confirm_portfolio(portfolio, ticker):
+            # Proceed with backtest
+            QMessageBox.information(self, "Backtest Started", "Portfolio confirmed. Proceeding with backtest...")
+            # TODO: Implement actual backtest logic here
+        else:
+            QMessageBox.information(self, "Backtest Cancelled", "Portfolio not confirmed. Backtest cancelled.")
 
     def select_portfolio_folder(self):
         """Open a folder selection dialog and update label."""
