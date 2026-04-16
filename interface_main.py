@@ -4,6 +4,10 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import QFont
 
+import allocate_port 
+from allocate_port import Portfolio
+import confirmation_popup
+
 import os
 cur_dir = os.path.dirname(__file__)
 import sys
@@ -13,9 +17,6 @@ if "\\im_dev\\" in cur_dir:
 else:
     import im_prod.std_lib.common as common
 
-import allocate_port
-import confirmation_popup
-    
     
 # Backtest Popup after running on all inputs
 class BackTestResults(QDialog):

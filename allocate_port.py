@@ -1,5 +1,6 @@
 import datetime as dt
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import os
 cur_dir = os.path.dirname(__file__)
@@ -136,9 +137,9 @@ class OptionLeg:
         if self.direction not in [1, -1]:
             raise ValueError(f"Option leg invalid direction: {self.direction}; expected 1 or -1")
 
-    def select_option(self, ticker: str, roll_date:dt.date, holidays):
+    def select_option(self, ticker: str, country_code:str, roll_date:dt.date, holidays):
         exp_date = self._calculate_expiry(roll_date, holidays)
-        option_univ = self.download_options(ticker, roll_date, roll_date)
+        option_univ = self.download_options(ticker, country_code, roll_date, roll_date)
         ul_row = option_univ.loc[option_univ['Symbol'] == ticker]
         ul_price = ul_row.loc[0, 'Last Price']
         option_univ = option_univ[option_univ['Expiry Date'] == exp_date.strftime("%Y-%m-%d")]
@@ -188,17 +189,24 @@ class OptionLeg:
                 expiry = expiry - dt.timedelta(days=7)
         return expiry
 
-    def download_options(self, ticker: str, start_date:str, end_date:str):
-        download_html = f"https://www.m-x.ca/en/trading/data/historical?symbol={ticker.lower()}&from={start_date}&to={end_date}&dnld=1#quotes"
-        current_att = 0
-        while current_att < 8:
-            try:
-                df_download = common.download_from_url(download_html)
-                print(f"Downloaded option data for {ticker} from {start_date} to {end_date}")
-                return df_download
-            except:
-                print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
-                return pd.DataFrame()
+    def download_options(self, ticker: str, country_code:str, start_date:str, end_date:str):
+        """start and end dates here specify the 'as of' dates for option universe"""
+        if country_code.lower() == "cn":
+
+            download_html = f"https://www.m-x.ca/en/trading/data/historical?symbol={ticker.lower()}&from={start_date}&to={end_date}&dnld=1#quotes"
+            current_att = 0
+            while current_att < 8:
+                try:
+                    df_download = common.download_from_url(download_html)
+                    print(f"Downloaded option data for {ticker} from {start_date} to {end_date}")
+                    return df_download
+                except:
+                    print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
+                    return pd.DataFrame()
+       
+        elif country_code.lower == "us":
+            # US option chains to be created
+            pass
 
 def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
     """ Fetches closing prices for a given ticker symbol. """
@@ -207,27 +215,29 @@ def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
     else:
         download_ticker = ticker
     try:
-        # Download historical data
-        ticker_obj = yf.Ticker(download_ticker)
-        
-        # Download historical data
-        data = ticker_obj.history(start=start_dt, end=end_dt)['Close']
-        #data = yf.download(download_ticker, start=start_dt, end=end_dt)['Close']
+
+        data = yf.download(download_ticker, period='max')
+        # only get certain time frame and closing prices
+        data = data['Close']
         data.rename(columns={download_ticker:ticker}, inplace=True)
+        data.rename_axis("Date")
+        data = data[data.index >= start_dt]
+        data = data[data.index <= end_dt]
         
         if data.empty:
             print(f"No data found for {ticker} in the given date range.")
             return pd.DataFrame()
-        closing_prices = data.reset_index()
-        return closing_prices
+        return data
     
     except Exception as e:
         print(f"Error fetching data for {ticker}: {e}")
-        #return pd.DataFrame()
-        manual_prices = pd.read_csv(os.path.join(cur_dir, "xiu.csv"))
-        manual_prices['Date'] = pd.to_datetime(manual_prices['Date']).dt.date
-        manual_prices = manual_prices[(manual_prices['Date'] >= pd.to_datetime(start_dt).date()) & (manual_prices['Date'] <= pd.to_datetime(end_dt).date())]
-        return manual_prices
+        return pd.DataFrame()
+    
+        # read csv of manual prices
+        #manual_prices = pd.read_csv(os.path.join(cur_dir, "xiu.csv"))
+        #manual_prices['Date'] = pd.to_datetime(manual_prices['Date']).dt.date
+        #manual_prices = manual_prices[(manual_prices['Date'] >= pd.to_datetime(start_dt).date()) & (manual_prices['Date'] <= pd.to_datetime(end_dt).date())]
+        #return manual_prices
     
 #------------------------------STRATEGY BUILDING BLOCK CLASSES---------------------------------------------------------------------------------    
 
@@ -358,7 +368,7 @@ class CoveredCall(OptionStrategy):
         """Notional value is the strike * multiplier * contracts."""
         call_leg = next(l for l in self.legs if isinstance(l, OptionLeg) and l.direction == -1)
         if call_leg:
-            return call_leg.strike * call_leg.multiplier * self.contracts
+            return self.underlying_spot * call_leg.multiplier * self.contracts
         return 0
 
     def collateral_required(self):
@@ -530,8 +540,8 @@ class Portfolio():
         # Global Variables and Inputs
         self.cash = base_cash
         self.strategies = []
-        self.start_dt = dt.date(2025,1,1)
-        self.end_dt = dt.date(2025,4,30)
+        self.start_dt = start_dt
+        self.end_dt = end_dt
         self.ticker = ticker.upper()
         self.country_code = country_code.upper()
 
@@ -575,7 +585,7 @@ class Portfolio():
             raise ValueError("Configuration dataframe has invalid ASSET values; expected 'option', 'equity', or 'bond'.")
         if not all(config['DIRECTION'].isin([1, -1])):
             raise ValueError("Configuration dataframe has invalid DIRECTION values; expected 1, -1")
-        if 'OPTION TYPE' in config.columns and not all(config['OPTION TYPE'].str.lower().isin(['c', 'p', None])):
+        if 'OPTION TYPE' in config.columns and not all(config['OPTION TYPE'].str.lower().isin(['c', 'p', np.nan])):
             raise ValueError("Configuration dataframe has invalid OPTION TYPE values; expected 'c', 'p', or None.")
         if 'DTM' in config.columns and not all(config['DTM'].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))):
             raise ValueError("Configuration dataframe has invalid DTM values; expected numeric or NaN.")
@@ -600,14 +610,14 @@ class Portfolio():
 
 
         # Find nearest next Friday for legging into options: First Roll Date
-        if self.start_dt.weekday() == 4: #Friday
-            nearest_fri = common.workday(self.start_dt, 5)
+        if self.start_dt.weekday() == 4: #Friday, start port today
+            nearest_fri = common.workday(self.start_dt, 0)
         else:
             days_til_fri = 4 - self.start_dt.weekday()
             nearest_fri = common.workday(self.start_dt, days_til_fri)
         while nearest_fri in self.holidays:
             nearest_fri = common.workday(nearest_fri, -1)
-        underlying_price_on_roll = self.ul_prices[self.ul_prices['Date'] == nearest_fri]['Close'].iloc[0]
+        underlying_price_on_roll = self.ul_prices[self.ul_prices.index == nearest_fri.strftime('%Y-%m-%d')].iloc[0].iloc[0]
                 
         # Identify unique sub-strategies loop an`d select options for each leg based on user input parameters (DTM, moneyness)
         sub_strat_iter = config['SUB_STRATEGY'].unique() # How many sub-strategies are in the config? Iterate through each one, select options, and build strategy objects accordingly
@@ -629,7 +639,7 @@ class Portfolio():
                     )
                     # select expiration and strike based on DTM, moneyness, and nearest next Friday, and update leg attributes accordingly
                     # this needs to be done before strategy matching because the selected option (strike and expiry) will impact the strategy type (e.g., single leg vs spread) and collateral requirement
-                    leg.select_option(self.ticker, nearest_fri, holidays_dict)
+                    leg.select_option(self.ticker, self.country_code, nearest_fri, holidays_dict)
                     legs.append(leg)
                 elif row['ASSET'].lower() == "equity":
                     leg = Equity(
@@ -642,16 +652,7 @@ class Portfolio():
                         end_dt=self.end_dt
                     )
                     legs.append(leg)
-                elif row['ASSET'].lower() == "bond":
-                    leg = Residual(
-                        asset=row['ASSET'],
-                        cash=row['WEIGHT']*self.cash if row['WEIGHT'] is not None else None,
-                        ticker="Money Market",
-                        country=self.country_code,
-                        start_dt=self.start_dt,
-                        end_dt=self.end_dt
-                    )
-                    legs.append(leg)
+ 
 
             # STRATEGY MATCHING: initiate classes for each identified strategy and calculate notional value and collateral requirement for each strategy
             if sub_id == "Single":
@@ -799,11 +800,11 @@ if __name__ == "__main__":
     base_cash = 1000000
 
     # User Inputs
-    start_dt = dt.date(2025,1,1)
-    end_dt = dt.date(2025,4,30)
+    start_dt = dt.date(2026,1,2)
+    end_dt = dt.date(2026,4,10)
     ticker = "XIU"
     country_code = "CN"
-    config_path = r"C:\Users\sxiao\backtester\portfolio_config\config.csv"
+    config_path = r"C:\Users\sxiao\backtester_v0\portfolio_config\config.csv"
 
     # Initialize Portfolio
     portfolio = Portfolio(config_path, ticker, country_code, start_dt, end_dt, base_cash)
