@@ -8,28 +8,30 @@ import sys
 sys.path.append('Z:\\ApolloGX')
 if "\\im_dev\\" in cur_dir:
     import im_dev.std_lib.common as common
+    from im_dev.std_lib.bloomberg_session import *
 else:
     import im_prod.std_lib.common as common
+    from im_prod.std_lib.bloomberg_session import *
 
 
-def us_option_select(ticker:str, expiry:str):
+
+def us_option_univ(ticker:str, start_date:dt.date, end_date:dt.date):
 
    """
-   Fetch option chain for a given underlying and expiry date.
-   
-   :param ticker: Underlying security (e.g., 'AAPL US Equity')
-   :param expiry: Expiry date in YYYYMMDD format (e.g., '20240621')
-   :return: DataFrame of option contracts
+   Fetch option universe using bloomberg session
    """
+   underlying_security = ticker.upper()+" US"
+   bbg_ticker_format = " Equity"
    try:
        # Retrieve option chain
-       df = blp.opt_chain(ticker, expiry=expiry)
+       bdp = BDP_Session()
+
        
-       if df.empty:
+       if data.empty:
            print("No options found for given parameters.")
            return None
        
-       return df
+       return data, hist_price
    
    except Exception as e:
        print(f"Error fetching option universe: {e}")
@@ -38,7 +40,7 @@ def us_option_select(ticker:str, expiry:str):
 
 
 
-def ca_option_chain(ticker:str, start_date:dt.date, end_date:dt.date):
+def ca_option_univ(ticker:str, start_date:dt.date, end_date:dt.date):
     """
     Will fail if start and end dates are too far apart, too much data
     """
@@ -61,7 +63,7 @@ end_dt = dt.date(2025,3,20)
 sstr = start_dt.strftime('%Y-%m-%d')
 estr = end_dt.strftime('%Y-%m-%d')
 
-#ca = ca_option_chain('XIU', start_dt, end_dt)
+#ca = ca_option_univ('XIU', start_dt, end_dt)
 
-us = us_option_select('AAPL US Equity', '20250103')
+us_data, us_hist = us_option_univ('SPY', start_dt, end_dt)
 
