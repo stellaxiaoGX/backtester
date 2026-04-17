@@ -131,9 +131,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not os.path.isfile(self.portfolio_path):
             QMessageBox.warning(self, "Invalid Portfolio Path", "Invalid portfolio configuration file path.")
             return
-        if ticker not in self.valid_list:
-            QMessageBox.warning(self, "Invalid Identifier", "Ticker not valid.")
-            return
         if country not in self.valid_country_codes:
             QMessageBox.warning(self, "Invalid Country Identifier", "Country Code not valid.")
             return

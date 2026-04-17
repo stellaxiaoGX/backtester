@@ -140,8 +140,10 @@ class OptionLeg:
     def select_option(self, ticker: str, country_code:str, roll_date:dt.date, holidays):
         exp_date = self._calculate_expiry(roll_date, holidays)
         option_univ = self.download_options(ticker, country_code, roll_date, roll_date)
+        
         ul_row = option_univ.loc[option_univ['Symbol'] == ticker]
         ul_price = ul_row.loc[0, 'Last Price']
+
         option_univ = option_univ[option_univ['Expiry Date'] == exp_date.strftime("%Y-%m-%d")]
         option_univ = option_univ[option_univ['Call/Put'] == 0] if self.option_type == 'c' else option_univ[option_univ['Call/Put'] == 1]
 
@@ -181,12 +183,13 @@ class OptionLeg:
         if self.dtm == 5:
             expiry = next_friday(roll_date)
         else:
-            target = roll_date + dt.timedelta(days=self.dtm)
+            weeks_by_month = self.dtm//30*28
+            target = roll_date + dt.timedelta(days=weeks_by_month)
             weekday = target.weekday()
             days_to_friday = 4 - weekday
             expiry = target + dt.timedelta(days=days_to_friday)
             while expiry in holidays:
-                expiry = expiry - dt.timedelta(days=7)
+                expiry = expiry - dt.timedelta(days=1)
         return expiry
 
     def download_options(self, ticker: str, country_code:str, start_date:str, end_date:str):
@@ -204,9 +207,11 @@ class OptionLeg:
                     print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
                     return pd.DataFrame()
        
-        elif country_code.lower == "us":
-            # US option chains to be created
-            pass
+        elif country_code.lower() == "us":
+            df = pd.read_csv(r"C:\Users\sxiao\backtester_v0\spy_options_20260123.csv")
+            # manual: SPY 2026-01-02
+            return df
+            
 
 def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
     """ Fetches closing prices for a given ticker symbol. """
@@ -800,11 +805,11 @@ if __name__ == "__main__":
     base_cash = 1000000
 
     # User Inputs
-    start_dt = dt.date(2026,1,2)
+    start_dt = dt.date(2026,1,23)
     end_dt = dt.date(2026,4,10)
-    ticker = "XIU"
-    country_code = "CN"
-    config_path = r"C:\Users\sxiao\backtester_v0\portfolio_config\config.csv"
+    ticker = "SPY"
+    country_code = "US"
+    config_path = r"C:\Users\sxiao\backtester_v0\portfolio_config\config3.csv"
 
     # Initialize Portfolio
     portfolio = Portfolio(config_path, ticker, country_code, start_dt, end_dt, base_cash)
