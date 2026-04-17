@@ -52,7 +52,7 @@ def date_engine():
     """
     Legacy date engine to determine the next roll date friday using a +6 system
     """
-
+    
     return
 
 def run_backtest(port: allocate_port.Portfolio, start_dt, end_dt):
@@ -65,14 +65,28 @@ def run_backtest(port: allocate_port.Portfolio, start_dt, end_dt):
         - self.
         - 
     """
+    
+    
 
     underlying = port.ticker
     country_code = port.country_code
     portfolio_allocation = port.strategies
         
     
-    # MAIN ENGINE: stops at every expiry and 
+    # MAIN ENGINE: stops at every expiry and rolls according to legacy roll date engine
 
 
 
     return
+
+
+
+class Backtest():
+    """
+    Portfolio Backtest class that needs to take in an allocated portfolio
+    """
+    
+    
+    
+    
+    
