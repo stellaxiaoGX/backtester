@@ -433,19 +433,25 @@ class Spread(OptionStrategy):
         self.underlying_spot = underlying_spot
         if self.weight is not None:
             target_notional = self.weight * base_cash  # Default base_cash
-            self.contracts = target_notional / (self.underlying_spot * short_leg.multiplier)
+            strike_diff = abs(long_leg.strike - short_leg.strike)
+            self.contracts = target_notional / (strike_diff * short_leg.multiplier)
             self.contracts = int(self.contracts)  # Round down to nearest whole contract
 
     def notional_value(self):
-        """Notional value based on underlying spot price * multiplier * contracts."""
-        return self.underlying_spot * self.legs[0].multiplier * self.contracts
+        """Notional value based on difference in strikes * multiplier * contracts."""
+        strike_diff = abs(self.legs[0].strike - self.legs[1].strike)
+        return strike_diff * self.legs[0].multiplier * self.contracts
 
     def collateral_required(self):
-        """Collateral for spread: max_loss = |short_strike - long_strike| * multiplier."""
+        """Collateral for spread: dependent on long or short spread."""
         long_leg = next(l for l in self.legs if l.direction == 1)
         short_leg = next(l for l in self.legs if l.direction == -1)
         strike_diff = abs(short_leg.strike - long_leg.strike)
-        return strike_diff * long_leg.multiplier * self.contracts
+        if short_leg.strike <= long_leg.strike:
+            collateral = self.weight * base_cash - (short_leg.price - long_leg.price) * self.contracts
+            return collateral
+        else:
+            return strike_diff * long_leg.multiplier * self.contracts
     
     def cash_flow(self):
         """Calculate total cash flow for the spread strategy. Pay premium for long leg, receive premium for short leg."""
@@ -471,15 +477,15 @@ class Strangle(OptionStrategy):
     def notional_value(self):
         """Notional value: spot * multiplier * contracts."""
         call_leg = next((l for l in self.legs if l.option_type == "c"), None)
-        put_leg = next((l for l in self.legs if l.option_type == "p"), None)
         return self.underlying_spot * call_leg.multiplier * self.contracts
 
     def collateral_required(self):
         """Collateral for strangles: max of two strikes * multiplier * contracts."""
-        collateral = 0
         call_leg = next((l for l in self.legs if l.option_type == "c"), None)
         put_leg = next((l for l in self.legs if l.option_type == "p"), None)
-        collateral = max(call_leg.strike if call_leg else 0, put_leg.strike if put_leg else 0) * call_leg.multiplier * self.contracts
+        collateral = call_leg.strike * call_leg.multiplier * self.contracts
+        if call_leg.direction == 1:
+            collateral -= (call_leg.price + put_leg.price)*self.contracts
         return collateral
 
     def cash_flow(self):
@@ -534,12 +540,18 @@ class IronCondor(OptionStrategy):
         self.underlying_spot = underlying_spot
         if self.weight is not None:
             target_notional = self.weight * base_cash  # Default base_cash
-            self.contracts = target_notional / (self.underlying_spot * short_call.multiplier)
-            self.contracts = int(self.contracts)
+            call_width = abs(short_call.strike - long_call.strike)
+            put_width = abs(short_put.strike - long_put.strike)
+            self.contracts = target_notional / (max(call_width, put_width) * short_call.multiplier)
+            self.contracts = int(self.contracts)  # Round down to nearest whole contract
         
     def notional_value(self):
         """Notional value: spot * multiplier * contracts."""
-        return self.underlying_spot * self.legs[0].multiplier * self.contracts
+        calls = [l for l in self.legs if l.option_type == "c"]
+        puts = [l for l in self.legs if l.option_type == "p"]
+        call_width = abs(calls[0].strike - calls[1].strike) if len(calls) == 2 else 0
+        put_width = abs(puts[0].strike - puts[1].strike) if len(puts) == 2 else 0
+        return max(call_width, put_width) * self.legs[0].multiplier * self.contracts
 
     def collateral_required(self):
         """Collateral for iron condor: max width of two spreads * multiplier * contracts."""
