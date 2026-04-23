@@ -326,9 +326,7 @@ class Single(OptionStrategy):
     def collateral_required(self):
         """Collateral for short options: strike * multiplier * contracts for short call/put."""
         option_leg = self.legs[0]
-        if option_leg.direction == -1:
-            return option_leg.strike * option_leg.multiplier * self.contracts
-        return 0
+        return option_leg.strike * option_leg.multiplier * self.contracts
 
     def cash_flow(self):
         """Calculate total premiums paid/received for the option leg."""

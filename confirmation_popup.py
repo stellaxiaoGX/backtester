@@ -23,8 +23,8 @@ class ConfirmationDialog(QDialog):
 
         # Table for portfolio details
         self.table = QTableWidget()
-        self.table.setColumnCount(11)
-        self.table.setHorizontalHeaderLabels(["Strategy", "Leg Type", "Direction", "Ticker", "Quantity", "Strike", "Option Type", "Unit Price", "Cash Flow", "Expiry", "Notional"])
+        self.table.setColumnCount(12)
+        self.table.setHorizontalHeaderLabels(["Strategy", "Leg Type", "Direction", "Ticker", "Quantity", "Strike", "Option Type", "Unit Price", "Cash Flow", "Expiry", "Collateral", "Notional"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet("alternate-background-color: #f0f0f0;")
@@ -189,6 +189,16 @@ class ConfirmationDialog(QDialog):
                     expiry_item.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(row, 9, expiry_item)
                     
+                    # Collateral
+                    if hasattr(strategy, 'collateral_required'):
+                        collateral = f"${strategy.collateral_required():.2f}"
+                    else:
+                        collateral = "N/A"
+                    collateral_item = QTableWidgetItem(collateral)
+                    collateral_item.setTextAlignment(Qt.AlignCenter)
+                    self.table.setItem(row, 10, collateral_item)
+                    
+                    
                     # Notional
                     if hasattr(strategy, 'notional_value'):
                         notional = f"${strategy.notional_value():.2f}"
@@ -198,7 +208,7 @@ class ConfirmationDialog(QDialog):
                         notional = "N/A"
                     notional_item = QTableWidgetItem(notional)
                     notional_item.setTextAlignment(Qt.AlignCenter)
-                    self.table.setItem(row, 10, notional_item)
+                    self.table.setItem(row, 11, notional_item)
                     
                     row += 1
 
