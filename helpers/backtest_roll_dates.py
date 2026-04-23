@@ -13,13 +13,77 @@ else:
     import im_prod.std_lib.common as common
     import im_prod.std_lib.data_library as data_library
 
-def option_dates_customized(start_date: dt.datetime, holidays: dict, end_date: dt.datetime, tenor: int):
-    output_dates = []
+def _calculate_expiry(self, roll_date: dt.date, holidays):
+    """
+    initial expiry function for day 0, different from rolling expiry date finder which will start on an expiry date
+    For dtm = 30 or multiple of 30 we want to get expiry date that is the closest 3rd friday to get liquid rolling later on
+    """
+    def next_friday(date):
+        if date.weekday() == 4:
+            candidate = common.workday(date, 5, holidays)
+        else:
+            candidate = common.workday(date, 4 - date.weekday(), holidays)
+        while candidate in holidays or candidate.weekday() > 4:
+            candidate = common.workday(candidate, -1, holidays)
+        return candidate
+    
+    def third_friday(year: int, month: int) -> dt.date:
+        first_day = dt.date(year, month, 1)
+        first_friday_offset = (4 - first_day.weekday()) % 7
+        first_friday = first_day + dt.timedelta(days=first_friday_offset)
+        return first_friday + dt.timedelta(days=14)
+
+    def next_third_friday(roll_date: dt.date, months: int) -> dt.date:
+        
+        # Third Friday of roll_date's month
+        current_tf = third_friday(roll_date.year, roll_date.month)
+        # Determine base month
+        if roll_date > current_tf:
+            base_month_offset = 1
+        else:
+            base_month_offset = 0
+    
+        # Convert year/month to absolute month index
+        start_index = roll_date.year * 12 + (roll_date.month - 1)
+        target_index = start_index + base_month_offset + months - 1
+    
+        year = target_index // 12
+        month = target_index % 12 + 1
+    
+        return third_friday(year, month)
+
+    if self.dtm == 5:
+        expiry = next_friday(roll_date)
+        
+    else: # any multiple of 30 (months) will look for the 3rd friday regardless of the date we start on
+        months = self.dtm//30
+        expiry = next_third_friday(roll_date, months)
+        
+    while expiry in holidays:
+        expiry = expiry - dt.timedelta(days=1)
+            
+    return expiry
+
+def option_dates_roll(start_date: dt.datetime, holidays: dict, end_date: dt.datetime, dtm: int, tenor: int):
+    """
+    function for determining option roll dates based on given DTM
+    Assumes that start_date is already handled to be a Friday before calling this function
+    Could expect you to input the third friday of the month
+    """
     d = start_date
+    def third_friday(year, month):
+        d = dt.date(year, month, 15)  
+        while d.weekday() != 4:      
+            d += dt.timedelta(days=1)
+        return d
+    
+    output_dates = []
                
     while d.date() <= end_date.date():
         # 1. target date = today + tenor
-        if d == start_date:
+        if d == end_date:
+            target_date = d
+        elif d + dt.timedelta(days=tenor) >= end_date:
             target_date = d
         else:
             target_date = d + dt.timedelta(days=tenor)
@@ -85,10 +149,8 @@ def equity_rebalance_dates(start_date: dt.datetime, end_date: dt.datetime, rule:
 
     return dates
 
-"""
-start_date = dt.datetime(2022, 1, 20)
-end_date = dt.datetime(2025, 9, 30)
-option_rebal_dates = option_dates_customized(start_date, common.tsx_holidays(), end_date + dt.timedelta(days=31), 16)
-equity_rebal = equity_rebalance_dates(start_date, end_date,'Q', option_rebal_dates)
+
+start_date = dt.datetime(2026, 1, 12) # Monday, the third week of Jan 2026
+end_date = dt.datetime(2026, 4, 17) # Friday, third week of April 2026
+option_rebal_dates = option_dates_roll(start_date, common.tsx_holidays(), end_date, 26)
 print(option_rebal_dates)
-"""

@@ -146,9 +146,11 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Show confirmation dialog
         if confirmation_popup.ConfirmationDialog.confirm_portfolio(portfolio, ticker):
-            # Proceed with backtest
             QMessageBox.information(self, "Backtest Started", "Portfolio confirmed. Proceeding with backtest...")
             # TODO: Implement actual backtest logic here
+            
+            
+            
         else:
             QMessageBox.information(self, "Backtest Cancelled", "Portfolio not confirmed. Backtest cancelled.")
 

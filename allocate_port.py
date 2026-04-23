@@ -36,7 +36,7 @@ class Equity():
         self.weight = float(weight)
         self.shares = shares
         self.ticker = ticker.upper() if ticker else None
-        self.country = country.upper() if country else None
+        self.country_code = country.upper() if country else None
         self.start_dt = start_dt
         self.end_dt = end_dt   
 
@@ -60,7 +60,6 @@ class Residual():
         self.country = country.upper() if country else None
         self.start_dt = start_dt
         self.end_dt = end_dt
-        self.rates_series = self.download_rates(self.ticker, self.country, self.start_dt.strftime("%Y-%m-%d"), self.end_dt.strftime("%Y-%m-%d"))
     
     def download_rates(self, ticker: str, country_code:str, start_dt: str, end_dt: str):
         """ Fetches historical interest rates given time frame and country. """
@@ -83,8 +82,8 @@ class Residual():
                 print(f"No rates found for {country_code} in the given date range.")
                 return pd.DataFrame()
             
-            self.rates_series = filtered_rates.reset_index(drop=True)
-            return self.rates_series
+            rates_series = filtered_rates.reset_index(drop=True)
+            return rates_series
         
         except Exception as e:
             print(f"Error fetching rates: {e}")
@@ -137,9 +136,8 @@ class OptionLeg:
         if self.direction not in [1, -1]:
             raise ValueError(f"Option leg invalid direction: {self.direction}; expected 1 or -1")
 
-    def select_option(self, ticker: str, country_code:str, roll_date:dt.date, holidays):
+    def select_option(self, ticker: str, country_code:str, option_univ: pd.DataFrame, roll_date:dt.date, holidays):
         exp_date = self._calculate_expiry(roll_date, holidays)
-        option_univ = self.download_options(ticker, country_code, roll_date, roll_date)
         
         ul_row = option_univ.loc[option_univ['Symbol'] == ticker]
         ul_price = ul_row.loc[0, 'Last Price']
@@ -171,6 +169,10 @@ class OptionLeg:
         self.expiry = expiry
 
     def _calculate_expiry(self, roll_date: dt.date, holidays):
+        """
+        initial expiry function for day 0, different from rolling expiry date finder which will start on an expiry date
+        For dtm = 30 or multiple of 30 we want to get expiry date that is the closest 3rd friday to get liquid rolling later on
+        """
         def next_friday(date):
             if date.weekday() == 4:
                 candidate = common.workday(date, 5, holidays)
@@ -179,38 +181,63 @@ class OptionLeg:
             while candidate in holidays or candidate.weekday() > 4:
                 candidate = common.workday(candidate, -1, holidays)
             return candidate
+        
+        def third_friday(year: int, month: int) -> dt.date:
+            first_day = dt.date(year, month, 1)
+            first_friday_offset = (4 - first_day.weekday()) % 7
+            first_friday = first_day + dt.timedelta(days=first_friday_offset)
+            return first_friday + dt.timedelta(days=14)
+
+        def next_third_friday(roll_date: dt.date, months: int) -> dt.date:
+            
+            # Third Friday of roll_date's month
+            current_tf = third_friday(roll_date.year, roll_date.month)
+            # Determine base month
+            if roll_date > current_tf:
+                base_month_offset = 1
+            else:
+                base_month_offset = 0
+        
+            # Convert year/month to absolute month index
+            start_index = roll_date.year * 12 + (roll_date.month - 1)
+            target_index = start_index + base_month_offset + months - 1
+        
+            year = target_index // 12
+            month = target_index % 12 + 1
+        
+            return third_friday(year, month)
 
         if self.dtm == 5:
             expiry = next_friday(roll_date)
-        else:
-            weeks_by_month = self.dtm//30*28
-            target = roll_date + dt.timedelta(days=weeks_by_month)
-            weekday = target.weekday()
-            days_to_friday = 4 - weekday
-            expiry = target + dt.timedelta(days=days_to_friday)
-            while expiry in holidays:
-                expiry = expiry - dt.timedelta(days=1)
+            
+        else: # any multiple of 30 (months) will look for the 3rd friday regardless of the date we start on
+            months = self.dtm//30
+            expiry = next_third_friday(roll_date, months)
+            
+        while expiry in holidays:
+            expiry = expiry - dt.timedelta(days=1)
+                
         return expiry
 
-    def download_options(self, ticker: str, country_code:str, start_date:str, end_date:str):
-        """start and end dates here specify the 'as of' dates for option universe"""
-        if country_code.lower() == "cn":
+def download_options(ticker: str, country_code:str, start_date:str, end_date:str):
+    """start and end dates here specify the 'as of' dates for option universe"""
+    if country_code.lower() == "cn":
 
-            download_html = f"https://www.m-x.ca/en/trading/data/historical?symbol={ticker.lower()}&from={start_date}&to={end_date}&dnld=1#quotes"
-            current_att = 0
-            while current_att < 8:
-                try:
-                    df_download = common.download_from_url(download_html)
-                    print(f"Downloaded option data for {ticker} from {start_date} to {end_date}")
-                    return df_download
-                except:
-                    print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
-                    return pd.DataFrame()
-       
-        elif country_code.lower() == "us":
-            df = pd.read_csv(r"C:\Users\sxiao\backtester_v0\spy_options_20260123.csv")
-            # manual: SPY 2026-01-02
-            return df
+        download_html = f"https://www.m-x.ca/en/trading/data/historical?symbol={ticker.lower()}&from={start_date}&to={end_date}&dnld=1#quotes"
+        current_att = 0
+        while current_att < 8:
+            try:
+                df_download = common.download_from_url(download_html)
+                print(f"Downloaded option data for {ticker} from {start_date} to {end_date}")
+                return df_download
+            except:
+                print(f"Failed to download data for {ticker} from {start_date} to {end_date}")
+                return pd.DataFrame()
+   
+    elif country_code.lower() == "us":
+        df = pd.read_csv(r"C:\Users\sxiao\backtester_v0\spy_options_20260102.csv")
+        # manual: SPY 2026-01-02
+        return df
             
 
 def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
@@ -243,7 +270,9 @@ def closing_prices(ticker: str, country_code:str, start_dt: str, end_dt: str):
         #manual_prices['Date'] = pd.to_datetime(manual_prices['Date']).dt.date
         #manual_prices = manual_prices[(manual_prices['Date'] >= pd.to_datetime(start_dt).date()) & (manual_prices['Date'] <= pd.to_datetime(end_dt).date())]
         #return manual_prices
-    
+        
+        
+
 #------------------------------STRATEGY BUILDING BLOCK CLASSES---------------------------------------------------------------------------------    
 
 class OptionStrategy:
@@ -305,6 +334,11 @@ class Single(OptionStrategy):
         """Calculate total premiums paid/received for the option leg."""
         option_leg = self.legs[0]
         return option_leg.price * self.contracts * option_leg.direction * -1 # Premiums paid are negative cash flow, received are positive cash flow
+    
+    def roll(self, roll_date:dt.date):
+        """ roll option function """
+        option_leg = self.legs[0]
+                
 
 class EquityStrategy(OptionStrategy):
     """A pure equity position strategy. Determine number of shares using weight and underlying spot price."""
@@ -613,18 +647,19 @@ class Portfolio():
                     raise ValueError(f"Sub-strategy {sub_id} has option legs with missing MONEYNESS.")
         #---------------------------------------ERROR CHECKING: VALIDATE CONFIG FILE--------------------------------------------------
 
-
-        # Find nearest next Friday for legging into options: First Roll Date
-        if self.start_dt.weekday() == 4: #Friday, start port today
+        # Handle day 0: first day to make trades, let it start on a friday
+        if self.start_dt.weekday() == 4: # already friday, start port today
             nearest_fri = common.workday(self.start_dt, 0)
         else:
             days_til_fri = 4 - self.start_dt.weekday()
             nearest_fri = common.workday(self.start_dt, days_til_fri)
         while nearest_fri in self.holidays:
             nearest_fri = common.workday(nearest_fri, -1)
+            
         underlying_price_on_roll = self.ul_prices[self.ul_prices.index == nearest_fri.strftime('%Y-%m-%d')].iloc[0].iloc[0]
-                
-        # Identify unique sub-strategies loop an`d select options for each leg based on user input parameters (DTM, moneyness)
+        option_univ = download_options(self.ticker, self.country_code, nearest_fri, nearest_fri)
+        
+        # Identify unique sub-strategies loop and select options for each leg based on user input parameters (DTM, moneyness)
         sub_strat_iter = config['SUB_STRATEGY'].unique() # How many sub-strategies are in the config? Iterate through each one, select options, and build strategy objects accordingly
         # for sub strategies 1, 2, ... in config:
         for sub in sub_strat_iter:
@@ -644,7 +679,7 @@ class Portfolio():
                     )
                     # select expiration and strike based on DTM, moneyness, and nearest next Friday, and update leg attributes accordingly
                     # this needs to be done before strategy matching because the selected option (strike and expiry) will impact the strategy type (e.g., single leg vs spread) and collateral requirement
-                    leg.select_option(self.ticker, self.country_code, nearest_fri, holidays_dict)
+                    leg.select_option(self.ticker, self.country_code, option_univ, nearest_fri, holidays_dict)
                     legs.append(leg)
                 elif row['ASSET'].lower() == "equity":
                     leg = Equity(
@@ -805,10 +840,10 @@ if __name__ == "__main__":
     base_cash = 1000000
 
     # User Inputs
-    start_dt = dt.date(2026,1,23)
-    end_dt = dt.date(2026,4,10)
-    ticker = "SPY"
-    country_code = "US"
+    start_dt = dt.date(2026,1,1)
+    end_dt = dt.date(2026,4,17) # third friday of april
+    ticker = "XIU"
+    country_code = "CN"
     config_path = r"C:\Users\sxiao\backtester_v0\portfolio_config\config3.csv"
 
     # Initialize Portfolio
