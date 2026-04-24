@@ -176,18 +176,17 @@ def eod_log(port: Portfolio, date:pd.date, ul_prices: pd.DataFrame, results_df: 
             option_legs = [l for l in strgy.legs if isinstance(l, OptionLeg)]
             for option in option_legs:
                 results_df.loc[len(results_df)] = [d, strategy_id, option.current, option.direction, strgy.contracts, option.price, option.strike, option.expiry, option.direction*strgy.contracts*option.price*option.multiplier]
-                
-"""
-Backtesting Methodology:
-    1. take portfolio allocation class result from allocate_port.py
-    2. drill down to every strategy in the allocated portfolio
-    3. On every looped date:
-        A. For each strategy: Check for expiry and transact + rebalance
-        B. money market cash accrues daily interest
-"""
+
     
 def run_backtest(port: Portfolio):
     """
+    Backtesting Methodology:
+        1. take portfolio allocation class result from allocate_port.py
+        2. drill down to every strategy in the allocated portfolio
+        3. On every looped date:
+            A. For each strategy: Check for expiry and transact + rebalance
+            B. money market cash accrues daily interest
+    
     Reminder that after allocate_port.py, the Portfolio Object Class will have:
         - self.strategies (filled with allocated positions)
         - self.start_dt & self.end_dt adjusted for holidays already
@@ -226,13 +225,17 @@ def run_backtest(port: Portfolio):
                 option.price_series = option_prices(ticker, full_options_universe, d, expiry_date)
                 price = option.price_series[d]
                 option.price = price
-
+                
+    # log end of day 0 positions into results dataframe
     eod_log(port, d, underlying_prices, backtest_results)
 
     # MAIN ENGINE: date loop that stops at every expiry and rolls the position/strategy
     while port.start_dt <= d <= port.end_dt:
+        
         ir = rates[d.strftime("%Y-%m-%d")]
         spot = underlying_prices[d.strftime("%Y-%m-%d")]
+        
+        # go through blocks within portfolio 
         for strgy in port.strategies:
             s_id = strgy.strategy_id
             
@@ -241,35 +244,46 @@ def run_backtest(port: Portfolio):
             
             elif s_id == 'Residual': # RESIDUAL or COLLATERAL: accrue daily interest
                 days = (last_d - d).days
-                strgy.legs[0].cash = strgy.legs[0].cash * (1+ir/365)
+                strgy.legs[0].cash = strgy.legs[0].cash * (1+ir) * (days/365)
                 continue
             
             else: # REST BUILDING BLOCKS: Check for expiry, only make any action if expiring ('Single', 'Spread', 'Synthetic', 'Strangle', 'IC', 'CC')
                 if s_id == 'CC': # Covered Call is the only strategy with equity leg, need to check differently
                     call_leg = next(l for l in strgy.legs if isinstance(l, OptionLeg))
+                    equity_leg = next(l for l in strgy.legs if isinstance(l, Equity))
                     
                     if call_leg.expiry == d:
-                        # Determine action needed at Expiration: ITM or OTM?
+                        
+                        # TODO: write expiry_action function for CoveredCall Strategy Class (sell equity leg if ITM) 
                         strgy.expiry_action(d, spot)
-                        # Roll for next position
-                        strgy.roll(d, spot)
+                        
+                        # TODO: rebalance the Covered Call position (determine shares by weight by overwriting CCstrgy with new positions)
+                        call_leg.select_option(port.ticker, port.country_code, full_options_universe, d, port.holidays)
+                        
+                        
+                        
+                        
                     else:
                         continue
                     
                 elif strgy.legs[0].expiry == d:
-                    # Take action on expiry
+                    # TODO: finish writing expiry_action functions for all Building Blocks. It's done for Single only currently.
                     strgy.expiry_action(d, spot)
                     # Roll position
-                    strgy.roll(d, spot)
+                    for option in strgy.legs:
+                        option.select_option(port.ticker, port.country_code, full_options_universe, d, port.holidays)
                     
-        # Compute daily value
+        # log daily market value for every position held
         eod_log(port, d, underlying_prices, backtest_results)
-        # GO TO NEXT DATE (save previous)
+        # compute total portfolio daily value: add a TOTAL MV line in the backtest_results dataframe.
+        
+        
+        # GO TO NEXT DATE (save previous date)
         last_d = d
         d = common.workday(d, 1, port.holidays)
         
     return backtest_results
-    
+
 
 def plot_backtest(results: pd.DataFrame):
     """

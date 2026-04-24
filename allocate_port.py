@@ -95,7 +95,7 @@ class OptionLeg:
 
     Inputs:
     - asset: "option"
-    - option_type: "call" | "put"
+    - option_type: "c" | "p"
     - direction: 1 | -1 for long or short
     - dtm: days to maturity (e.g., 30 for monthly options)
     - moneyness: percentage away from the money (e.g., 1.05 for 5% OTM call, 0.95 for 5% OTM put)
@@ -333,9 +333,24 @@ class Single(OptionStrategy):
         option_leg = self.legs[0]
         return option_leg.price * self.contracts * option_leg.direction * -1 # Premiums paid are negative cash flow, received are positive cash flow
     
-    def roll(self, roll_date:dt.date):
-        """ roll option function """
-        option_leg = self.legs[0]
+    
+    def expiry_action(self, roll_date:dt.date, spot):
+        """ determines the transaction if the option is ITM and returns net cash flow if any"""
+        option = self.legs[0]
+        # ITM PUT: 
+        if option.option_type.lower() == 'p' and spot < option.strike:
+            if option.direction == 1: # long ITM put, execute right to sell (buy shares at spot and earn strike)
+                return self.contracts*(option.strike-spot)
+            else: # short ITM put, incur loss (buy at strike and sell at spot)
+                return self.contracts*(spot-option.strike)
+        # ITM CALL:
+        elif option.option_type.lower() == 'c' and spot > option.strike:
+            if option.direction == 1: # long ITM call, execute right to buy (buy shares at strike and sell spot)
+                return self.contracts*(option.strike-spot)
+            else: # short ITM call, incur loss (sell at strike and buy spot)
+                return self.contracts*(spot-option.strike)
+        else: # everything else just expires
+            return 0
                 
 
 class EquityStrategy(OptionStrategy):
